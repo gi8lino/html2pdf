@@ -3,13 +3,13 @@ services:
     build:
       context: .
       args:
-        VERSION: ${HTML2PDF_BUILD_VERSION:-dev}
+        VERSION: ${HTML2PDF__BUILD_VERSION:-dev}
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      HTML2PDF_TOKEN: ${HTML2PDF_TOKEN:-}
-      HTML2PDF_WORKERS: ${HTML2PDF_WORKERS:-2}
-      HTML2PDF_TIMEOUT: ${HTML2PDF_TIMEOUT:-45}
+      HTML2PDF__TOKEN: ${HTML2PDF__TOKEN:-}
+      HTML2PDF__WORKERS: ${HTML2PDF__WORKERS:-2}
+      HTML2PDF__TIMEOUT: ${HTML2PDF__TIMEOUT:-45}
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777

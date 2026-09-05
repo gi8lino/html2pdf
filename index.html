@@ -3,8 +3,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Small HTTP service for rendering self-contained HTML to PDF with WeasyPrint."
+    />
+
     <title>html2pdf</title>
+
     <link rel="icon" href="/logo.svg" type="image/svg+xml" />
+
     <style>
       :root {
         color-scheme: light dark;
@@ -28,10 +35,27 @@
         line-height: 1.2;
       }
 
+      h2 {
+        margin-top: 40px;
+      }
+
+      a {
+        color: inherit;
+        text-underline-offset: 3px;
+      }
+
+      .header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 24px;
+      }
+
       .brand {
         display: flex;
         align-items: center;
         gap: 12px;
+        margin: 0;
       }
 
       .brand img {
@@ -39,9 +63,30 @@
         height: 38px;
       }
 
+      .header-meta {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 8px;
+        white-space: nowrap;
+        font-size: 0.9rem;
+      }
+
+      .version {
+        padding: 2px 7px;
+        border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+        border-radius: 999px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.8rem;
+      }
+
       code,
       pre {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      }
+
+      code {
+        font-size: 0.92em;
       }
 
       .code-block {
@@ -54,6 +99,7 @@
         padding-right: 82px;
         border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
         border-radius: 8px;
+        line-height: 1.45;
       }
 
       .copy-button {
@@ -92,22 +138,73 @@
         border-bottom: 1px solid
           color-mix(in srgb, currentColor 18%, transparent);
         text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        font-weight: 600;
       }
 
       .muted {
         opacity: 0.72;
       }
+
+      footer {
+        margin-top: 48px;
+        padding-top: 20px;
+        border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+        font-size: 0.9rem;
+      }
+
+      @media (max-width: 560px) {
+        body {
+          padding: 32px 18px;
+        }
+
+        .header {
+          flex-direction: column;
+          gap: 8px;
+        }
+
+        .header-meta {
+          margin-top: 0;
+        }
+
+        th,
+        td {
+          padding-left: 6px;
+          padding-right: 6px;
+        }
+      }
     </style>
   </head>
+
   <body>
     <main>
-      <h1 class="brand"><img src="/logo.svg" alt="" />html2pdf</h1>
-      <p>
-        A small HTTP service that renders self-contained UTF-8 HTML to PDF with
-        WeasyPrint.
-      </p>
+      <header class="header">
+        <div>
+          <h1 class="brand">
+            <img src="/logo.svg" alt="" />
+            html2pdf
+          </h1>
+
+          <p>
+            A small HTTP service that renders self-contained UTF-8 HTML to PDF
+            with WeasyPrint.
+          </p>
+        </div>
+
+        <div class="header-meta">
+          <span class="version">{{VERSION}}</span>
+
+          <a href="{{SOURCE_URL}}" target="_blank" rel="noopener noreferrer">
+            GitHub
+          </a>
+        </div>
+      </header>
 
       <h2>API</h2>
+
       <table>
         <thead>
           <tr>
@@ -116,17 +213,22 @@
             <th>Purpose</th>
           </tr>
         </thead>
+
         <tbody>
           <tr>
             <td><code>GET</code></td>
             <td><code>/</code></td>
             <td>This page</td>
           </tr>
+
           <tr>
             <td><code>GET</code></td>
-            <td><code>/healthz</code></td>
+            <td>
+              <a href="/healthz"><code>/healthz</code></a>
+            </td>
             <td>Health check</td>
           </tr>
+
           <tr>
             <td><code>POST</code></td>
             <td><code>/render</code></td>
@@ -136,10 +238,21 @@
       </table>
 
       <h2>Render a document</h2>
+
+      <p>
+        Send a UTF-8 HTML document as the request body using
+        <code>Content-Type: text/html</code>.
+      </p>
+
       <div class="code-block">
-        <button class="copy-button" type="button" aria-label="Copy curl command">
+        <button
+          class="copy-button"
+          type="button"
+          aria-label="Copy curl command"
+        >
           Copy
         </button>
+
         <pre><code>curl --fail-with-body \
   -H 'Content-Type: text/html; charset=utf-8' \
   --data-binary @document.html \
@@ -147,13 +260,23 @@
   -o document.pdf</code></pre>
       </div>
 
+      <h2>Authentication</h2>
+
       <p>
-        If <code>HTML2PDF_TOKEN</code> is configured, also send a bearer token:
+        Bearer authentication for <code>/render</code> is optional. When
+        <code>HTML2PDF__TOKEN</code> is configured, include it in the
+        <code>Authorization</code> header.
       </p>
+
       <div class="code-block">
-        <button class="copy-button" type="button" aria-label="Copy curl command">
+        <button
+          class="copy-button"
+          type="button"
+          aria-label="Copy curl command"
+        >
           Copy
         </button>
+
         <pre><code>curl --fail-with-body \
   -H 'Authorization: Bearer &lt;token&gt;' \
   -H 'Content-Type: text/html; charset=utf-8' \
@@ -162,18 +285,65 @@
   -o document.pdf</code></pre>
       </div>
 
+      <h2>Configuration</h2>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Setting</th>
+            <th>Effective value</th>
+          </tr>
+        </thead>
+
+        <tbody>
+          <tr>
+            <td><code>HTML2PDF__TOKEN</code></td>
+            <td>{{AUTH_STATUS}}</td>
+          </tr>
+
+          <tr>
+            <td><code>HTML2PDF__WORKERS</code></td>
+            <td><code>{{WORKERS}}</code></td>
+          </tr>
+
+          <tr>
+            <td><code>HTML2PDF__TIMEOUT</code></td>
+            <td><code>{{TIMEOUT}}s</code></td>
+          </tr>
+
+          <tr>
+            <td><code>HTML2PDF__MAX_HTML_BYTES</code></td>
+            <td>{{MAX_HTML_SIZE}}</td>
+          </tr>
+
+          <tr>
+            <td><code>HTML2PDF__MAX_PDF_BYTES</code></td>
+            <td>{{MAX_PDF_SIZE}}</td>
+          </tr>
+        </tbody>
+      </table>
+
       <h2>Asset policy</h2>
+
       <p>
-        Documents must be self-contained. Images, fonts, and other referenced
-        resources must use <code>data:</code> URLs. Network and file-system
-        assets are intentionally rejected.
+        Documents must be self-contained. Images, fonts, and other resources
+        must be embedded using <code>data:</code> URLs.
       </p>
 
-      <p class="muted">
-        Version <code>{{VERSION}}</code> · Maximum HTML request size: 32 MiB.
-        Maximum generated PDF size: 64 MiB.
+      <p>
+        HTTP(S) resources, local files, and other external assets are
+        intentionally rejected. This prevents submitted documents from using the
+        renderer for network or local file access.
       </p>
     </main>
+
+    <footer class="muted">
+      html2pdf <code>{{VERSION}}</code>
+      · powered by WeasyPrint ·
+      <a href="{{SOURCE_URL}}" target="_blank" rel="noopener noreferrer">
+        source on GitHub
+      </a>
+    </footer>
 
     <script>
       for (const button of document.querySelectorAll(".copy-button")) {
@@ -188,6 +358,7 @@
             textarea.setAttribute("readonly", "");
             textarea.style.position = "fixed";
             textarea.style.opacity = "0";
+
             document.body.appendChild(textarea);
             textarea.select();
             document.execCommand("copy");
@@ -195,6 +366,7 @@
           }
 
           button.textContent = "Copied";
+
           window.setTimeout(() => {
             button.textContent = "Copy";
           }, 1200);

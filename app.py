@@ -5,23 +5,199 @@ import html
 import logging
 import os
 import time
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 from http import HTTPStatus
 from pathlib import Path
+from typing import Any, BinaryIO, TypeAlias, cast
 
 from weasyprint import HTML, default_url_fetcher
 
-MAX_HTML_BYTES = 32 * 1024 * 1024
-MAX_PDF_BYTES = 64 * 1024 * 1024
-AUTH_TOKEN = os.environ.get("HTML2PDF_TOKEN", "").strip()
-VERSION = os.environ.get("HTML2PDF_VERSION", "dev").strip() or "dev"
-INDEX_HTML = (
-    Path(__file__)
-    .with_name("index.html")
-    .read_text(encoding="utf-8")
-    .replace("{{VERSION}}", html.escape(VERSION))
-    .encode("utf-8")
-)
+Environ: TypeAlias = Mapping[str, Any]
+Header: TypeAlias = tuple[str, str]
+Headers: TypeAlias = list[Header]
+Response: TypeAlias = list[bytes]
+StartResponse: TypeAlias = Callable[[str, Headers], Any]
+
+
+@dataclass(frozen=True, slots=True)
+class Config:
+    """Runtime configuration loaded from environment variables."""
+
+    token: str
+    version: str
+    source_url: str
+    workers: int
+    timeout: int
+    max_html_bytes: int
+    max_pdf_bytes: int
+
+    @classmethod
+    def from_env(cls) -> "Config":
+        """Load and validate runtime configuration."""
+        return cls(
+            token=cls._env("HTML2PDF__TOKEN"),
+            version=cls._env("HTML2PDF__VERSION", "dev") or "dev",
+            source_url=cls._env("HTML2PDF__SOURCE_URL"),
+            workers=cls._env_int(
+                "HTML2PDF__WORKERS",
+                2,
+            ),
+            timeout=cls._env_int(
+                "HTML2PDF__TIMEOUT",
+                45,
+            ),
+            max_html_bytes=cls._env_int(
+                "HTML2PDF__MAX_HTML_BYTES",
+                32 * 1024 * 1024,
+            ),
+            max_pdf_bytes=cls._env_int(
+                "HTML2PDF__MAX_PDF_BYTES",
+                64 * 1024 * 1024,
+            ),
+        )
+
+    @staticmethod
+    def _env(name: str, default: str = "") -> str:
+        """Read a string environment variable."""
+        return os.environ.get(name, default).strip()
+
+    @classmethod
+    def _env_int(
+        cls,
+        name: str,
+        default: int,
+        *,
+        minimum: int = 1,
+    ) -> int:
+        """Read and validate a positive integer environment variable."""
+        value = cls._env(name)
+
+        if not value:
+            return default
+
+        try:
+            result = int(value)
+        except ValueError as exc:
+            raise ValueError(f"{name} must be an integer") from exc
+
+        if result < minimum:
+            raise ValueError(f"{name} must be at least {minimum}")
+
+        return result
+
+
+CONFIG = Config.from_env()
+
+logger = logging.getLogger("gunicorn.error")
+
+
+class AssetError(ValueError):
+    """A document references an asset outside its submitted data URLs."""
+
+
+class RequestError(ValueError):
+    """An HTTP request failed validation."""
+
+    def __init__(self, status: HTTPStatus, body: bytes) -> None:
+        super().__init__(body.decode("utf-8", errors="replace").strip())
+        self.status = status
+        self.body = body
+
+
+@dataclass(frozen=True, slots=True)
+class Request:
+    """Small typed wrapper around the WSGI request environment."""
+
+    _environ: Environ
+
+    def _string(self, key: str) -> str:
+        """Return a string value from the WSGI environment."""
+        return cast(str, self._environ.get(key, ""))
+
+    @property
+    def method(self) -> str:
+        """Return the HTTP request method."""
+        return self._string("REQUEST_METHOD")
+
+    @property
+    def path(self) -> str:
+        """Return the requested path."""
+        return self._string("PATH_INFO")
+
+    @property
+    def media_type(self) -> str:
+        """Return the normalized request media type."""
+        return (
+            self._string("CONTENT_TYPE")
+            .partition(";")[0]
+            .strip()
+            .casefold()
+        )
+
+    @property
+    def content_length(self) -> str:
+        """Return the raw Content-Length value."""
+        return self._string("CONTENT_LENGTH").strip()
+
+    @property
+    def authorization(self) -> str:
+        """Return the Authorization header."""
+        return self._string("HTTP_AUTHORIZATION").strip()
+
+    def read(self, length: int) -> bytes:
+        """Read up to length bytes from the request body."""
+        stream = cast(BinaryIO, self._environ["wsgi.input"])
+        return stream.read(length)
+
+
+def format_bytes(value: int) -> str:
+    """Return a human-readable binary byte size."""
+    units = ("B", "KiB", "MiB", "GiB")
+    size = float(value)
+
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if size.is_integer():
+                return f"{int(size)} {unit}"
+
+            return f"{size:.1f} {unit}"
+
+        size /= 1024
+
+    raise AssertionError("unreachable")
+
+
+def load_index(config: Config) -> bytes:
+    """Load the usage page and substitute runtime information."""
+    replacements = {
+        "{{VERSION}}": config.version,
+        "{{SOURCE_URL}}": config.source_url,
+        "{{AUTH_STATUS}}": "enabled" if config.token else "disabled",
+        "{{WORKERS}}": str(config.workers),
+        "{{TIMEOUT}}": str(config.timeout),
+        "{{MAX_HTML_SIZE}}": format_bytes(config.max_html_bytes),
+        "{{MAX_PDF_SIZE}}": format_bytes(config.max_pdf_bytes),
+    }
+
+    page = (
+        Path(__file__)
+        .with_name("index.html")
+        .read_text(encoding="utf-8")
+    )
+
+    for placeholder, value in replacements.items():
+        page = page.replace(
+            placeholder,
+            html.escape(value, quote=True),
+        )
+
+    return page.encode("utf-8")
+
+
+INDEX_HTML = load_index(CONFIG)
 LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
+
 INDEX_HEADERS = (
     (
         "Content-Security-Policy",
@@ -32,160 +208,162 @@ INDEX_HEADERS = (
     ("Referrer-Policy", "no-referrer"),
     ("X-Frame-Options", "DENY"),
 )
-logger = logging.getLogger("gunicorn.error")
 
 
-class AssetError(ValueError):
-    """A document references an asset outside its submitted data URLs."""
-
-
-def render_document(source):
+def render_document(source: str) -> bytes:
     """Render one self-contained HTML document and return its PDF bytes."""
-    rejected = []
+    asset_rejected = False
 
-    def fetch_asset(url, *args, **kwargs):
+    def fetch_asset(url: str, *args: Any, **kwargs: Any) -> Any:
+        nonlocal asset_rejected
+
         # Never give submitted HTML access to container files, cloud metadata,
         # private services, or the public internet. Callers must embed assets.
         if not url.startswith("data:"):
-            rejected.append(True)
+            asset_rejected = True
             raise AssetError("Assets must be embedded as data URLs")
+
         return default_url_fetcher(url, *args, **kwargs)
 
-    result = HTML(string=source, url_fetcher=fetch_asset).write_pdf()
+    result = HTML(
+        string=source,
+        url_fetcher=fetch_asset,
+    ).write_pdf()
 
     # WeasyPrint can log asset failures and continue. Turn rejected assets into
     # a hard error so callers never receive a silently incomplete document.
-    if rejected:
+    if asset_rejected:
         raise AssetError("Assets must be embedded as data URLs")
+
     return result
 
 
-def bearer_token(environ):
+def bearer_token(request: Request) -> str:
     """Return the submitted bearer token, or an empty string when absent."""
-    authorization = environ.get("HTTP_AUTHORIZATION", "").strip()
+    authorization = request.authorization
     if not authorization:
         return ""
 
-    parts = authorization.split(None, 1)
-    if len(parts) != 2 or parts[0].lower() != "bearer":
+    parts = authorization.split(maxsplit=1)
+    if len(parts) != 2 or parts[0].casefold() != "bearer":
         return ""
+
     return parts[1].strip()
 
 
-def authorized(environ):
+def authorized(request: Request) -> bool:
     """Report whether the request may use the render endpoint."""
-    if not AUTH_TOKEN:
+    if not CONFIG.token:
         return True
-    token = bearer_token(environ)
-    return bool(token) and hmac.compare_digest(token, AUTH_TOKEN)
+
+    return hmac.compare_digest(
+        bearer_token(request),
+        CONFIG.token,
+    )
 
 
-def application(environ, start_response):
-    """Serve the index, logo, health check, and HTML-to-PDF render endpoint."""
+def duration_ms(started: float) -> int:
+    """Return elapsed milliseconds since a perf-counter timestamp."""
+    return round((time.perf_counter() - started) * 1000)
 
-    def respond(
-        status,
-        body,
-        content_type="text/plain; charset=utf-8",
-        extra=(),
-    ):
-        start_response(
-            f"{status.value} {status.phrase}",
-            [
-                ("Content-Type", content_type),
-                ("Content-Length", str(len(body))),
-                ("Cache-Control", "no-store"),
-                ("X-Content-Type-Options", "nosniff"),
-                *extra,
-            ],
-        )
-        return [body]
 
-    path = environ.get("PATH_INFO", "")
-    method = environ.get("REQUEST_METHOD", "")
+def respond(
+    start_response: StartResponse,
+    status: HTTPStatus,
+    body: bytes,
+    content_type: str = "text/plain; charset=utf-8",
+    extra_headers: Iterable[Header] = (),
+) -> Response:
+    """Build a WSGI response."""
+    headers = [
+        ("Content-Type", content_type),
+        ("Content-Length", str(len(body))),
+        ("Cache-Control", "no-store"),
+        ("X-Content-Type-Options", "nosniff"),
+        *extra_headers,
+    ]
 
-    if path == "/" and method == "GET":
-        return respond(
-            HTTPStatus.OK,
-            INDEX_HTML,
-            "text/html; charset=utf-8",
-            extra=INDEX_HEADERS,
-        )
+    start_response(
+        f"{status.value} {status.phrase}",
+        headers,
+    )
 
-    if path == "/logo.svg" and method == "GET":
-        return respond(
-            HTTPStatus.OK,
-            LOGO_SVG,
-            "image/svg+xml",
-        )
+    return [body]
 
-    if path == "/healthz" and method == "GET":
-        return respond(HTTPStatus.OK, b"ok\n")
 
-    if path != "/render":
-        return respond(HTTPStatus.NOT_FOUND, b"Not found\n")
-
-    if method != "POST":
-        return respond(
-            HTTPStatus.METHOD_NOT_ALLOWED,
-            b"Use POST\n",
-            extra=[("Allow", "POST")],
-        )
-
-    if not authorized(environ):
-        return respond(
-            HTTPStatus.UNAUTHORIZED,
-            b"Invalid or missing bearer token\n",
-            extra=[("WWW-Authenticate", "Bearer")],
-        )
-
-    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[
-        0].strip().lower()
-    if content_type != "text/html":
-        return respond(
+def read_html(request: Request) -> tuple[str, int]:
+    """Validate and read a UTF-8 HTML request body."""
+    if request.media_type != "text/html":
+        raise RequestError(
             HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
             b"Send text/html encoded as UTF-8\n",
         )
 
-    if not environ.get("CONTENT_LENGTH"):
-        return respond(
+    if not request.content_length:
+        raise RequestError(
             HTTPStatus.LENGTH_REQUIRED,
             b"Content-Length is required\n",
         )
 
     try:
-        length = int(environ["CONTENT_LENGTH"])
-    except ValueError:
-        return respond(
+        length = int(request.content_length)
+    except ValueError as exc:
+        raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"Invalid Content-Length\n",
-        )
+        ) from exc
 
     if length <= 0:
-        return respond(
+        raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"HTML is required\n",
         )
 
-    if length > MAX_HTML_BYTES:
-        return respond(
+    if length > CONFIG.max_html_bytes:
+        raise RequestError(
             HTTPStatus.CONTENT_TOO_LARGE,
-            b"HTML exceeds 32 MiB\n",
+            b"HTML exceeds configured size limit\n",
         )
 
-    body = environ["wsgi.input"].read(length)
+    body = request.read(length)
+
     if len(body) != length:
-        return respond(
+        raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"Incomplete request body\n",
         )
 
     try:
         source = body.decode("utf-8")
-    except UnicodeDecodeError:
-        return respond(
+    except UnicodeDecodeError as exc:
+        raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"HTML must be UTF-8\n",
+        ) from exc
+
+    return source, length
+
+
+def render_response(
+    request: Request,
+    start_response: StartResponse,
+) -> Response:
+    """Validate a render request, render its PDF, and return the response."""
+    if not authorized(request):
+        return respond(
+            start_response,
+            HTTPStatus.UNAUTHORIZED,
+            b"Invalid or missing bearer token\n",
+            extra_headers=[("WWW-Authenticate", "Bearer")],
+        )
+
+    try:
+        source, html_bytes = read_html(request)
+    except RequestError as exc:
+        return respond(
+            start_response,
+            exc.status,
+            exc.body,
         )
 
     started = time.perf_counter()
@@ -195,46 +373,110 @@ def application(environ, start_response):
     except AssetError:
         logger.warning(
             "render rejected duration_ms=%d html_bytes=%d reason=asset_policy",
-            round((time.perf_counter() - started) * 1000),
-            length,
+            duration_ms(started),
+            html_bytes,
         )
+
         return respond(
+            start_response,
             HTTPStatus.UNPROCESSABLE_CONTENT,
-            b"Embed images, fonts, and other assets as data URLs; external assets are not fetched\n",
+            b"Embed images, fonts, and other assets as data URLs; "
+            b"external assets are not fetched\n",
         )
     except Exception:
         logger.exception(
             "render failed duration_ms=%d html_bytes=%d reason=internal_error",
-            round((time.perf_counter() - started) * 1000),
-            length,
+            duration_ms(started),
+            html_bytes,
         )
+
         return respond(
+            start_response,
             HTTPStatus.INTERNAL_SERVER_ERROR,
             b"PDF rendering failed\n",
         )
 
     pdf_bytes = len(result)
-    if pdf_bytes > MAX_PDF_BYTES:
+
+    if pdf_bytes > CONFIG.max_pdf_bytes:
         logger.warning(
-            "render rejected duration_ms=%d html_bytes=%d pdf_bytes=%d reason=pdf_too_large",
-            round((time.perf_counter() - started) * 1000),
-            length,
+            "render rejected duration_ms=%d html_bytes=%d "
+            "pdf_bytes=%d reason=pdf_too_large",
+            duration_ms(started),
+            html_bytes,
             pdf_bytes,
         )
+
         return respond(
+            start_response,
             HTTPStatus.CONTENT_TOO_LARGE,
-            b"PDF exceeds 64 MiB\n",
+            b"PDF exceeds configured size limit\n",
         )
 
     logger.info(
         "render completed duration_ms=%d html_bytes=%d pdf_bytes=%d",
-        round((time.perf_counter() - started) * 1000),
-        length,
+        duration_ms(started),
+        html_bytes,
         pdf_bytes,
     )
 
     return respond(
+        start_response,
         HTTPStatus.OK,
         result,
         "application/pdf",
     )
+
+
+def application(
+    environ: Environ,
+    start_response: StartResponse,
+) -> Response:
+    """Serve the index, logo, health check, and HTML-to-PDF endpoint."""
+    request = Request(environ)
+
+    match request.path, request.method:
+        case "/", "GET":
+            return respond(
+                start_response,
+                HTTPStatus.OK,
+                INDEX_HTML,
+                "text/html; charset=utf-8",
+                INDEX_HEADERS,
+            )
+
+        case "/logo.svg", "GET":
+            return respond(
+                start_response,
+                HTTPStatus.OK,
+                LOGO_SVG,
+                "image/svg+xml",
+            )
+
+        case "/healthz", "GET":
+            return respond(
+                start_response,
+                HTTPStatus.OK,
+                b"ok\n",
+            )
+
+        case "/render", "POST":
+            return render_response(
+                request,
+                start_response,
+            )
+
+        case "/render", _:
+            return respond(
+                start_response,
+                HTTPStatus.METHOD_NOT_ALLOWED,
+                b"Use POST\n",
+                extra_headers=[("Allow", "POST")],
+            )
+
+        case _:
+            return respond(
+                start_response,
+                HTTPStatus.NOT_FOUND,
+                b"Not found\n",
+            )
