@@ -5,6 +5,7 @@ import html
 import logging
 import os
 import time
+from http import HTTPStatus
 from pathlib import Path
 
 from weasyprint import HTML, default_url_fetcher
@@ -82,9 +83,14 @@ def authorized(environ):
 def application(environ, start_response):
     """Serve the index, logo, health check, and HTML-to-PDF render endpoint."""
 
-    def respond(status, body, content_type="text/plain; charset=utf-8", extra=()):
+    def respond(
+        status,
+        body,
+        content_type="text/plain; charset=utf-8",
+        extra=(),
+    ):
         start_response(
-            status,
+            f"{status.value} {status.phrase}",
             [
                 ("Content-Type", content_type),
                 ("Content-Length", str(len(body))),
@@ -100,65 +106,90 @@ def application(environ, start_response):
 
     if path == "/" and method == "GET":
         return respond(
-            "200 OK",
+            HTTPStatus.OK,
             INDEX_HTML,
             "text/html; charset=utf-8",
             extra=INDEX_HEADERS,
         )
 
     if path == "/logo.svg" and method == "GET":
-        return respond("200 OK", LOGO_SVG, "image/svg+xml")
+        return respond(
+            HTTPStatus.OK,
+            LOGO_SVG,
+            "image/svg+xml",
+        )
 
     if path == "/healthz" and method == "GET":
-        return respond("200 OK", b"ok\n")
+        return respond(HTTPStatus.OK, b"ok\n")
 
     if path != "/render":
-        return respond("404 Not Found", b"Not found\n")
+        return respond(HTTPStatus.NOT_FOUND, b"Not found\n")
 
     if method != "POST":
         return respond(
-            "405 Method Not Allowed",
+            HTTPStatus.METHOD_NOT_ALLOWED,
             b"Use POST\n",
             extra=[("Allow", "POST")],
         )
 
     if not authorized(environ):
         return respond(
-            "401 Unauthorized",
+            HTTPStatus.UNAUTHORIZED,
             b"Invalid or missing bearer token\n",
             extra=[("WWW-Authenticate", "Bearer")],
         )
 
-    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower()
+    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[
+        0].strip().lower()
     if content_type != "text/html":
         return respond(
-            "415 Unsupported Media Type",
+            HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
             b"Send text/html encoded as UTF-8\n",
         )
 
     if not environ.get("CONTENT_LENGTH"):
-        return respond("411 Length Required", b"Content-Length is required\n")
+        return respond(
+            HTTPStatus.LENGTH_REQUIRED,
+            b"Content-Length is required\n",
+        )
 
     try:
         length = int(environ["CONTENT_LENGTH"])
     except ValueError:
-        return respond("400 Bad Request", b"Invalid Content-Length\n")
+        return respond(
+            HTTPStatus.BAD_REQUEST,
+            b"Invalid Content-Length\n",
+        )
 
     if length <= 0:
-        return respond("400 Bad Request", b"HTML is required\n")
+        return respond(
+            HTTPStatus.BAD_REQUEST,
+            b"HTML is required\n",
+        )
+
     if length > MAX_HTML_BYTES:
-        return respond("413 Content Too Large", b"HTML exceeds 32 MiB\n")
+        return respond(
+            HTTPStatus.CONTENT_TOO_LARGE,
+            b"HTML exceeds 32 MiB\n",
+        )
 
     body = environ["wsgi.input"].read(length)
     if len(body) != length:
-        return respond("400 Bad Request", b"Incomplete request body\n")
+        return respond(
+            HTTPStatus.BAD_REQUEST,
+            b"Incomplete request body\n",
+        )
 
     try:
         source = body.decode("utf-8")
     except UnicodeDecodeError:
-        return respond("400 Bad Request", b"HTML must be UTF-8\n")
+        return respond(
+            HTTPStatus.BAD_REQUEST,
+            b"HTML must be UTF-8\n",
+        )
 
     started = time.perf_counter()
+
     try:
         result = render_document(source)
     except AssetError:
@@ -168,7 +199,7 @@ def application(environ, start_response):
             length,
         )
         return respond(
-            "422 Unprocessable Content",
+            HTTPStatus.UNPROCESSABLE_CONTENT,
             b"Embed images, fonts, and other assets as data URLs; external assets are not fetched\n",
         )
     except Exception:
@@ -177,7 +208,10 @@ def application(environ, start_response):
             round((time.perf_counter() - started) * 1000),
             length,
         )
-        return respond("500 Internal Server Error", b"PDF rendering failed\n")
+        return respond(
+            HTTPStatus.INTERNAL_SERVER_ERROR,
+            b"PDF rendering failed\n",
+        )
 
     pdf_bytes = len(result)
     if pdf_bytes > MAX_PDF_BYTES:
@@ -187,7 +221,10 @@ def application(environ, start_response):
             length,
             pdf_bytes,
         )
-        return respond("413 Content Too Large", b"PDF exceeds 64 MiB\n")
+        return respond(
+            HTTPStatus.CONTENT_TOO_LARGE,
+            b"PDF exceeds 64 MiB\n",
+        )
 
     logger.info(
         "render completed duration_ms=%d html_bytes=%d pdf_bytes=%d",
@@ -195,4 +232,9 @@ def application(environ, start_response):
         length,
         pdf_bytes,
     )
-    return respond("200 OK", result, "application/pdf")
+
+    return respond(
+        HTTPStatus.OK,
+        result,
+        "application/pdf",
+    )
