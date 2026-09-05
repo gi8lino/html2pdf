@@ -34,7 +34,8 @@ class ServiceTests(unittest.TestCase):
             response["status"] = status
             response["headers"] = dict(headers)
 
-        response["body"] = b"".join((application or self.application)(environ, start))
+        response["body"] = b"".join(
+            (application or self.application)(environ, start))
         return response
 
     def test_index(self):
@@ -66,10 +67,13 @@ class ServiceTests(unittest.TestCase):
                 self.request(HTTP_AUTHORIZATION="Bearer secret")["status"],
                 "413 Content Too Large",
             )
-            self.assertEqual(self.request(application=original)["status"], "200 OK")
+            self.assertEqual(self.request(application=original)[
+                             "status"], "200 OK")
         for application, version in ((original, "test"), (self.application, "other")):
-            result = self.request(method="GET", path="/", application=application)
-            self.assertIn(f'<span class="version">{version}</span>'.encode(), result["body"])
+            result = self.request(method="GET", path="/",
+                                  application=application)
+            self.assertIn(
+                f'<span class="version">{version}</span>'.encode(), result["body"])
 
     def test_assets_are_loaded_once_per_application(self):
         with (
@@ -79,18 +83,21 @@ class ServiceTests(unittest.TestCase):
             application = app.create_application(self.config)
             for _ in range(2):
                 self.assertEqual(
-                    self.request(method="GET", path="/", application=application)["body"],
+                    self.request(method="GET", path="/",
+                                 application=application)["body"],
                     b"cached page",
                 )
                 self.assertEqual(
-                    self.request(method="GET", path="/logo.svg", application=application)["body"],
+                    self.request(method="GET", path="/logo.svg",
+                                 application=application)["body"],
                     b"cached logo",
                 )
             index.assert_called_once_with(self.config)
             logo.assert_called_once_with()
 
     def test_module_wsgi_entry_point_serves_health(self):
-        result = self.request(method="GET", path="/healthz", application=app.application)
+        result = self.request(method="GET", path="/healthz",
+                              application=app.application)
         self.assertEqual(result["status"], "200 OK")
         self.assertEqual(result["body"], b"ok\n")
 
@@ -148,7 +155,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_authentication_does_not_protect_index_or_health(self):
         self.configure(token="secret")
-        self.assertEqual(self.request(method="GET", path="/")["status"], "200 OK")
+        self.assertEqual(self.request(method="GET", path="/")
+                         ["status"], "200 OK")
         self.assertEqual(
             self.request(method="GET", path="/healthz")["status"],
             "200 OK",
@@ -207,7 +215,8 @@ class ServiceTests(unittest.TestCase):
             result = self.request()
 
         self.assertEqual(result["status"], "413 Content Too Large")
-        self.assertEqual(result["body"], b"PDF exceeds configured size limit\n")
+        self.assertEqual(
+            result["body"], b"PDF exceeds configured size limit\n")
         self.assertIn("reason=pdf_too_large", logs.output[-1])
 
     def test_malformed_bearer_schemes_are_rejected(self):
@@ -248,7 +257,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_authentication_precedes_body_read(self):
         self.configure(token="secret")
-        result = self.request(CONTENT_TYPE="application/json", **{"wsgi.input": None})
+        result = self.request(
+            CONTENT_TYPE="application/json", **{"wsgi.input": None})
         self.assertEqual(result["status"], "401 Unauthorized")
 
     def test_content_length_requires_ascii_digits(self):
@@ -261,7 +271,8 @@ class ServiceTests(unittest.TestCase):
     def test_oversized_content_length_is_rejected_before_body_read(self):
         for length in (str(self.config.max_html_bytes + 1), "9" * 5000):
             with self.subTest(digits=len(length)), patch("app.render_document") as render:
-                result = self.request(CONTENT_LENGTH=length, **{"wsgi.input": None})
+                result = self.request(
+                    CONTENT_LENGTH=length, **{"wsgi.input": None})
                 self.assertEqual(result["status"], "413 Content Too Large")
                 render.assert_not_called()
 
@@ -297,7 +308,8 @@ class ServiceTests(unittest.TestCase):
                     CONTENT_TYPE=f"text/html; charset={charset}",
                     **{"wsgi.input": None},
                 )
-                self.assertEqual(result["status"], "415 Unsupported Media Type")
+                self.assertEqual(result["status"],
+                                 "415 Unsupported Media Type")
                 render.assert_not_called()
 
     def test_known_get_endpoints_reject_other_methods(self):
@@ -305,7 +317,8 @@ class ServiceTests(unittest.TestCase):
             for method in ("POST", "PUT", "DELETE", "OPTIONS"):
                 with self.subTest(path=path, method=method):
                     result = self.request(method=method, path=path)
-                    self.assertEqual(result["status"], "405 Method Not Allowed")
+                    self.assertEqual(result["status"],
+                                     "405 Method Not Allowed")
                     self.assertEqual(result["headers"]["Allow"], "GET")
                     self.assertEqual(result["body"], b"Use GET\n")
 
@@ -321,7 +334,8 @@ class ServiceTests(unittest.TestCase):
         with (
             patch("app.render_document", return_value=b"%PDF-fixture") as render,
         ):
-            result = self.request(body=body, CONTENT_TYPE="TEXT/HTML; charset=UTF-8")
+            result = self.request(
+                body=body, CONTENT_TYPE="TEXT/HTML; charset=UTF-8")
             self.assertEqual(result["status"], "200 OK")
             render.assert_called_once_with(body.decode())
             render.reset_mock()
@@ -339,7 +353,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_internal_render_error_is_logged_but_not_exposed(self):
         with (
-            patch("app.render_document", side_effect=RuntimeError("private details")),
+            patch("app.render_document",
+                  side_effect=RuntimeError("private details")),
             self.assertLogs("gunicorn.error", level="ERROR") as logs,
         ):
             result = self.request()
@@ -354,7 +369,8 @@ class ServiceTests(unittest.TestCase):
             with self.subTest(path=path):
                 result = self.request(method=method, path=path)
                 headers = result["headers"]
-                self.assertEqual(int(headers["Content-Length"]), len(result["body"]))
+                self.assertEqual(
+                    int(headers["Content-Length"]), len(result["body"]))
                 self.assertEqual(headers["Cache-Control"], "no-store")
                 self.assertEqual(headers["X-Content-Type-Options"], "nosniff")
                 if path == "/render":
@@ -389,6 +405,20 @@ class ServiceTests(unittest.TestCase):
 
 
 class ConfigTests(unittest.TestCase):
+    def test_listen_address_is_loaded_and_displayed(self):
+        default = app.Config.from_env({})
+        self.assertEqual(default.listen_address, "0.0.0.0:8080")
+        self.assertIn(b"0.0.0.0:8080", app.load_index(default))
+        config = app.Config.from_env(
+            {"HTML2PDF__LISTEN_ADDRESS": " 0.0.0.0:9090 "})
+        self.assertEqual(config.listen_address, "0.0.0.0:9090")
+        page = app.load_index(config)
+        self.assertIn(b"HTML2PDF__LISTEN_ADDRESS", page)
+        self.assertIn(b"<code>0.0.0.0:9090</code>", page)
+        self.assertNotIn(b"{{LISTEN_ADDRESS}}", page)
+        escaped = app.load_index(replace(config, listen_address='<address>"&'))
+        self.assertIn(b"&lt;address&gt;&quot;&amp;", escaped)
+
     def test_defaults_are_independent_of_host_environment(self):
         config = app.Config.from_env({})
         self.assertEqual(config, app.Config("", "dev", "", 2, 45,

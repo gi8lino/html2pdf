@@ -302,6 +302,11 @@
           </tr>
 
           <tr>
+            <td><code>HTML2PDF__LISTEN_ADDRESS</code></td>
+            <td><code>{{LISTEN_ADDRESS}}</code></td>
+          </tr>
+
+          <tr>
             <td><code>HTML2PDF__WORKERS</code></td>
             <td><code>{{WORKERS}}</code></td>
           </tr>
@@ -322,6 +327,12 @@
           </tr>
         </tbody>
       </table>
+
+      <p>
+        The listen address is inside the container. Docker port mappings control
+        the host address and port used to reach the service. If you change the
+        listening port, update the container port in the mapping to match.
+      </p>
 
       <h2>Asset policy</h2>
 

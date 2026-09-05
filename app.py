@@ -50,6 +50,7 @@ class Config:
     timeout: int
     max_html_bytes: int
     max_pdf_bytes: int
+    listen_address: str = "0.0.0.0:8080"
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Config:
@@ -58,6 +59,8 @@ class Config:
             token=cls._env(env, "HTML2PDF__TOKEN"),
             version=cls._env(env, "HTML2PDF__VERSION", "dev") or "dev",
             source_url=cls._env(env, "HTML2PDF__SOURCE_URL"),
+            listen_address=cls._env(
+                env, "HTML2PDF__LISTEN_ADDRESS", "0.0.0.0:8080"),
             workers=cls._env_int(
                 env,
                 "HTML2PDF__WORKERS",
@@ -211,6 +214,7 @@ def load_index(config: Config) -> bytes:
         "{{SOURCE_URL}}": config.source_url,
         "{{AUTH_STATUS}}": "enabled" if config.token else "disabled",
         "{{WORKERS}}": str(config.workers),
+        "{{LISTEN_ADDRESS}}": config.listen_address,
         "{{TIMEOUT}}": str(config.timeout),
         "{{MAX_HTML_SIZE}}": format_bytes(config.max_html_bytes),
         "{{MAX_PDF_SIZE}}": format_bytes(config.max_pdf_bytes),

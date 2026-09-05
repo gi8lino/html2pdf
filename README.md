@@ -107,13 +107,14 @@ If `HTML2PDF__TOKEN` is unset or empty, `/render` accepts requests without authe
 
 The service is configured through environment variables.
 
-| Variable                   | Default    | Description                          |
-| -------------------------- | ---------- | ------------------------------------ |
-| `HTML2PDF__TOKEN`          | empty      | Optional bearer token for `/render`. |
-| `HTML2PDF__WORKERS`        | `2`        | Number of Gunicorn workers.          |
-| `HTML2PDF__TIMEOUT`        | `45`       | Gunicorn worker timeout in seconds.  |
-| `HTML2PDF__MAX_HTML_BYTES` | `33554432` | Maximum HTML request size (32 MiB).  |
-| `HTML2PDF__MAX_PDF_BYTES`  | `67108864` | Maximum generated PDF size (64 MiB). |
+| Variable                   | Default        | Description                                 |
+| -------------------------- | -------------- | ------------------------------------------- |
+| `HTML2PDF__TOKEN`          | empty          | Optional bearer token for `/render`.        |
+| `HTML2PDF__LISTEN_ADDRESS` | `0.0.0.0:8080` | Gunicorn bind address inside the container. |
+| `HTML2PDF__WORKERS`        | `2`            | Number of Gunicorn workers.                 |
+| `HTML2PDF__TIMEOUT`        | `45`           | Gunicorn worker timeout in seconds.         |
+| `HTML2PDF__MAX_HTML_BYTES` | `33554432`     | Maximum HTML request size (32 MiB).         |
+| `HTML2PDF__MAX_PDF_BYTES`  | `67108864`     | Maximum generated PDF size (64 MiB).        |
 
 Size limits are configured in bytes.
 
@@ -190,6 +191,23 @@ docker run --rm \
 
 Open `http://localhost:8080/` for the built-in usage page.
 
+To expose the service on host port `9090`, keep the default container listen address and change the port mapping:
+
+```sh
+docker run --rm -p 127.0.0.1:9090:8080 html2pdf
+```
+
+`HTML2PDF__LISTEN_ADDRESS` controls the address inside the container. If you change its port, the container port in the mapping must match:
+
+```sh
+docker run --rm \
+  -e HTML2PDF__LISTEN_ADDRESS=0.0.0.0:9090 \
+  -p 127.0.0.1:9090:9090 \
+  html2pdf
+```
+
+Both examples expose the usage page at `http://localhost:9090/`.
+
 ## Docker Compose
 
 Start the service with:
@@ -215,6 +233,8 @@ docker compose up --build
 ```
 
 The included Compose configuration runs the container with a read-only root filesystem, a bounded `/tmp`, dropped Linux capabilities, and `no-new-privileges`.
+
+It maps host port `8080` to container port `8080` and does not forward `HTML2PDF__LISTEN_ADDRESS` from your shell. To change only the host port, edit `ports` to use, for example, `127.0.0.1:9090:8080`. To change the container's listening port as well, add `HTML2PDF__LISTEN_ADDRESS` to the service's `environment` and update the container port in `ports` to match.
 
 ## Resource limits
 
