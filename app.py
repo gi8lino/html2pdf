@@ -227,6 +227,9 @@ def render_document(source: str) -> bytes:
 
     result = HTML(
         string=source,
+        # Resolve relative assets so they reach the rejecting fetcher instead
+        # of being silently dropped by WeasyPrint as unresolved references.
+        base_url="https://html2pdf.invalid/",
         url_fetcher=fetch_asset,
     ).write_pdf()
 
@@ -257,8 +260,8 @@ def authorized(request: Request) -> bool:
         return True
 
     return hmac.compare_digest(
-        bearer_token(request),
-        CONFIG.token,
+        bearer_token(request).encode("utf-8"),
+        CONFIG.token.encode("utf-8"),
     )
 
 
@@ -303,6 +306,12 @@ def read_html(request: Request) -> tuple[str, int]:
         raise RequestError(
             HTTPStatus.LENGTH_REQUIRED,
             b"Content-Length is required\n",
+        )
+
+    if not request.content_length.isascii() or not request.content_length.isdecimal():
+        raise RequestError(
+            HTTPStatus.BAD_REQUEST,
+            b"Invalid Content-Length\n",
         )
 
     try:
