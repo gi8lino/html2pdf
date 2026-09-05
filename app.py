@@ -3,13 +3,14 @@
 import hmac
 import logging
 import os
+import time
 from pathlib import Path
 
 from weasyprint import HTML, default_url_fetcher
 
 MAX_HTML_BYTES = 32 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
-AUTH_TOKEN = os.environ.get("HTML2PDF__TOKEN", "").strip()
+AUTH_TOKEN = os.environ.get("HTML2PDF_TOKEN", "").strip()
 INDEX_HTML = Path(__file__).with_name("index.html").read_bytes()
 LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
 logger = logging.getLogger("gunicorn.error")
@@ -105,8 +106,7 @@ def application(environ, start_response):
             extra=[("WWW-Authenticate", "Bearer")],
         )
 
-    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[
-        0].strip().lower()
+    content_type = environ.get("CONTENT_TYPE", "").split(";", 1)[0].strip().lower()
     if content_type != "text/html":
         return respond(
             "415 Unsupported Media Type",
@@ -135,18 +135,41 @@ def application(environ, start_response):
     except UnicodeDecodeError:
         return respond("400 Bad Request", b"HTML must be UTF-8\n")
 
+    started = time.perf_counter()
     try:
         result = render_document(source)
     except AssetError:
+        logger.warning(
+            "render rejected duration_ms=%d html_bytes=%d reason=asset_policy",
+            round((time.perf_counter() - started) * 1000),
+            length,
+        )
         return respond(
             "422 Unprocessable Content",
             b"Embed images, fonts, and other assets as data URLs; external assets are not fetched\n",
         )
     except Exception:
-        logger.exception("PDF rendering failed")
+        logger.exception(
+            "render failed duration_ms=%d html_bytes=%d reason=internal_error",
+            round((time.perf_counter() - started) * 1000),
+            length,
+        )
         return respond("500 Internal Server Error", b"PDF rendering failed\n")
 
-    if len(result) > MAX_PDF_BYTES:
+    pdf_bytes = len(result)
+    if pdf_bytes > MAX_PDF_BYTES:
+        logger.warning(
+            "render rejected duration_ms=%d html_bytes=%d pdf_bytes=%d reason=pdf_too_large",
+            round((time.perf_counter() - started) * 1000),
+            length,
+            pdf_bytes,
+        )
         return respond("413 Content Too Large", b"PDF exceeds 64 MiB\n")
 
+    logger.info(
+        "render completed duration_ms=%d html_bytes=%d pdf_bytes=%d",
+        round((time.perf_counter() - started) * 1000),
+        length,
+        pdf_bytes,
+    )
     return respond("200 OK", result, "application/pdf")

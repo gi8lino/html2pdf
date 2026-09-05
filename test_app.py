@@ -55,6 +55,27 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["body"], b"%PDF-fixture")
         render.assert_called_once_with("<p>Hello</p>")
 
+    def test_render_logging(self):
+        with self.assertLogs("gunicorn.error", level="INFO") as logs:
+            with patch("app.render_document", return_value=b"%PDF-fixture"):
+                result = self.request()
+
+        self.assertEqual(result["status"], "200 OK")
+        self.assertIn("render completed", logs.output[-1])
+        self.assertIn("html_bytes=12", logs.output[-1])
+        self.assertIn("pdf_bytes=12", logs.output[-1])
+        self.assertIn("duration_ms=", logs.output[-1])
+
+    def test_rejected_render_logging(self):
+        with self.assertLogs("gunicorn.error", level="WARNING") as logs:
+            with patch("app.render_document", side_effect=AssetError):
+                result = self.request()
+
+        self.assertEqual(result["status"], "422 Unprocessable Content")
+        self.assertIn("render rejected", logs.output[-1])
+        self.assertIn("reason=asset_policy", logs.output[-1])
+        self.assertIn("html_bytes=12", logs.output[-1])
+
     def test_optional_bearer_authentication(self):
         with patch.object(app, "AUTH_TOKEN", "secret"):
             missing = self.request()
