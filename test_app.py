@@ -123,9 +123,53 @@ class ServiceTests(unittest.TestCase):
                 self.assertEqual(int(result["status"].split()[0]), expected)
                 render.assert_not_called()
 
-    def test_external_assets_are_rejected(self):
-        with self.assertRaises(AssetError):
-            render_document('<img src="https://example.com/image.png">')
+    def test_network_and_file_assets_are_rejected(self):
+        urls = [
+            "https://example.com/image.png",
+            "http://127.0.0.1:8080/private",
+            "http://10.0.0.1/private",
+            "http://169.254.169.254/latest/meta-data/",
+            "file:///etc/passwd",
+        ]
+
+        for url in urls:
+            with self.subTest(url=url), self.assertRaises(AssetError):
+                render_document(f'<img src="{url}">')
+
+    def test_data_url_assets_are_allowed(self):
+        source = (
+            '<img alt="pixel" '
+            'src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%221%22%20height%3D%221%22%2F%3E">'
+        )
+        result = render_document(source)
+        self.assertTrue(result.startswith(b"%PDF-"))
+
+    def test_generated_pdf_size_limit(self):
+        with (
+            patch.object(app, "MAX_PDF_BYTES", 3),
+            patch("app.render_document", return_value=b"1234"),
+            self.assertLogs("gunicorn.error", level="WARNING") as logs,
+        ):
+            result = self.request()
+
+        self.assertEqual(result["status"], "413 Content Too Large")
+        self.assertEqual(result["body"], b"PDF exceeds 64 MiB\n")
+        self.assertIn("reason=pdf_too_large", logs.output[-1])
+
+    def test_malformed_bearer_schemes_are_rejected(self):
+        authorizations = [
+            "Basic secret",
+            "Token secret",
+            "Bearer",
+            "Bearer   ",
+            "Bearer wrong",
+        ]
+
+        with patch.object(app, "AUTH_TOKEN", "secret"):
+            for authorization in authorizations:
+                with self.subTest(authorization=authorization):
+                    result = self.request(HTTP_AUTHORIZATION=authorization)
+                    self.assertEqual(result["status"], "401 Unauthorized")
 
     def test_real_pdf_render(self):
         result = render_document("<h1>Hello</h1><p>Rendered by html2pdf.</p>")
