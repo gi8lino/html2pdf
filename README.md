@@ -141,14 +141,24 @@ The included Compose configuration runs the container with a read-only root file
 
 ## Limits
 
-The service currently enforces these fixed limits:
+The service uses conservative defaults for a general-purpose deployment:
 
 - HTML request: 32 MiB
 - generated PDF: 64 MiB
-- Gunicorn workers: 2
-- render timeout: 45 seconds per worker
+- Gunicorn workers: 2 by default (`HTML2PDF_WORKERS`)
+- render timeout: 45 seconds by default (`HTML2PDF_TIMEOUT`)
 
-These limits are intentionally conservative defaults for a general-purpose service. Container CPU and memory limits should still be configured by the deployment environment.
+The worker count and timeout can be overridden at runtime, for example:
+
+```sh
+docker run --rm \
+  -p 127.0.0.1:8080:8080 \
+  -e HTML2PDF_WORKERS=4 \
+  -e HTML2PDF_TIMEOUT=60 \
+  html2pdf
+```
+
+The HTML and PDF size limits remain fixed. Container CPU and memory limits should still be configured by the deployment environment.
 
 ## Security model
 

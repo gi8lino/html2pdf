@@ -16,6 +16,8 @@ WORKDIR /app
 COPY app.py index.html logo.svg /app/
 
 ENV HTML2PDF_VERSION=$VERSION \
+  HTML2PDF_WORKERS=2 \
+  HTML2PDF_TIMEOUT=45 \
   PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \
   HOME=/tmp \
@@ -25,5 +27,5 @@ USER 65532:0
 
 EXPOSE 8080
 
-ENTRYPOINT ["gunicorn"]
-CMD ["--bind=0.0.0.0:8080", "--workers=2", "--timeout=45", "--graceful-timeout=10", "--worker-tmp-dir=/tmp", "--no-control-socket", "--access-logfile=-", "--error-logfile=-", "app:application"]
+ENTRYPOINT ["sh", "-c"]
+CMD ["exec gunicorn --bind=0.0.0.0:8080 --workers=\"$HTML2PDF_WORKERS\" --timeout=\"$HTML2PDF_TIMEOUT\" --graceful-timeout=10 --worker-tmp-dir=/tmp --no-control-socket --access-logfile=- --error-logfile=- app:application"]
