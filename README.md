@@ -80,17 +80,17 @@ This restriction prevents submitted documents from using the renderer for SSRF, 
 
 Bearer-token authentication is optional. For a service that is reachable only over a trusted private network, you may leave it disabled. If the renderer is reachable across a broader network, configuring a token is recommended in addition to normal network-level controls.
 
-Set `HTML2PDF__TOKEN`:
+Set `HTML2PDF_TOKEN`:
 
 ```sh
-export HTML2PDF__TOKEN="$(openssl rand -hex 32)"
+export HTML2PDF_TOKEN="$(openssl rand -hex 32)"
 ```
 
 Then send it as a bearer token:
 
 ```sh
 curl --fail-with-body \
-  -H "Authorization: Bearer $HTML2PDF__TOKEN" \
+  -H "Authorization: Bearer $HTML2PDF_TOKEN" \
   -H 'Content-Type: text/html; charset=utf-8' \
   --data-binary @document.html \
   http://localhost:8080/render \
@@ -99,14 +99,14 @@ curl --fail-with-body \
 
 Only `/render` is protected. `/` and `/healthz` remain public so they can be used for documentation and health probes.
 
-If `HTML2PDF__TOKEN` is unset or empty, `/render` accepts requests without authentication.
+If `HTML2PDF_TOKEN` is unset or empty, `/render` accepts requests without authentication.
 
 ## Run with Docker
 
 Build and start the service:
 
 ```sh
-docker build -t html2pdf .
+docker build --build-arg VERSION=dev -t html2pdf .
 docker run --rm \
   -p 127.0.0.1:8080:8080 \
   html2pdf
@@ -117,11 +117,13 @@ With authentication:
 ```sh
 docker run --rm \
   -p 127.0.0.1:8080:8080 \
-  -e HTML2PDF__TOKEN="$HTML2PDF__TOKEN" \
+  -e HTML2PDF_TOKEN="$HTML2PDF_TOKEN" \
   html2pdf
 ```
 
-Open `http://localhost:8080/` for the built-in usage page.
+Open `http://localhost:8080/` for the built-in usage page. The build version is
+shown there. Pass it with `--build-arg VERSION=...`; `make build` uses the latest
+`v*` Git tag, or `dev` when no tag exists. Override it with `BUILD_VERSION=...`.
 
 ## Docker Compose
 
@@ -132,7 +134,7 @@ docker compose up --build
 To enable authentication:
 
 ```sh
-HTML2PDF__TOKEN="$(openssl rand -hex 32)" docker compose up --build
+HTML2PDF_TOKEN="$(openssl rand -hex 32)" docker compose up --build
 ```
 
 The included Compose configuration runs the container with a read-only root filesystem, a bounded `/tmp`, dropped Linux capabilities, and `no-new-privileges`.
@@ -155,7 +157,7 @@ HTML-to-PDF rendering is a resource-intensive operation and should not be expose
 Recommended deployment controls:
 
 - keep the service on a private network whenever possible;
-- configure `HTML2PDF__TOKEN` when callers are not fully trusted at the network layer;
+- configure `HTML2PDF_TOKEN` when callers are not fully trusted at the network layer;
 - run the container as non-root;
 - use a read-only root filesystem;
 - provide only a temporary writable `/tmp`;
@@ -189,7 +191,7 @@ make dev
 Enable bearer-token authentication during development:
 
 ```sh
-HTML2PDF__TOKEN="$(openssl rand -hex 32)" make dev-auth
+HTML2PDF_TOKEN="$(openssl rand -hex 32)" make dev-auth
 ```
 
 The bind address, port, image name, and development tag can be overridden when needed:
@@ -207,7 +209,7 @@ make compose
 or:
 
 ```sh
-HTML2PDF__TOKEN="$(openssl rand -hex 32)" make compose-auth
+HTML2PDF_TOKEN="$(openssl rand -hex 32)" make compose-auth
 ```
 
 The test suite covers the HTTP contract, optional bearer authentication, input validation, asset isolation, and a real PDF render.

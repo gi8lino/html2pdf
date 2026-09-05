@@ -137,11 +137,7 @@
 
       <h2>Render a document</h2>
       <div class="code-block">
-        <button
-          class="copy-button"
-          type="button"
-          aria-label="Copy curl command"
-        >
+        <button class="copy-button" type="button" aria-label="Copy curl command">
           Copy
         </button>
         <pre><code>curl --fail-with-body \
@@ -152,14 +148,10 @@
       </div>
 
       <p>
-        If <code>HTML2PDF__TOKEN</code> is configured, also send a bearer token:
+        If <code>HTML2PDF_TOKEN</code> is configured, also send a bearer token:
       </p>
       <div class="code-block">
-        <button
-          class="copy-button"
-          type="button"
-          aria-label="Copy curl command"
-        >
+        <button class="copy-button" type="button" aria-label="Copy curl command">
           Copy
         </button>
         <pre><code>curl --fail-with-body \
@@ -178,7 +170,8 @@
       </p>
 
       <p class="muted">
-        Maximum HTML request size: 32 MiB. Maximum generated PDF size: 64 MiB.
+        Version <code>{{VERSION}}</code> · Maximum HTML request size: 32 MiB.
+        Maximum generated PDF size: 64 MiB.
       </p>
     </main>
 

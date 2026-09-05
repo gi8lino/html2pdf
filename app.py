@@ -1,6 +1,7 @@
 """Small WSGI service that renders self-contained UTF-8 HTML to PDF."""
 
 import hmac
+import html
 import logging
 import os
 import time
@@ -11,7 +12,14 @@ from weasyprint import HTML, default_url_fetcher
 MAX_HTML_BYTES = 32 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
 AUTH_TOKEN = os.environ.get("HTML2PDF_TOKEN", "").strip()
-INDEX_HTML = Path(__file__).with_name("index.html").read_bytes()
+VERSION = os.environ.get("HTML2PDF_VERSION", "dev").strip() or "dev"
+INDEX_HTML = (
+    Path(__file__)
+    .with_name("index.html")
+    .read_text(encoding="utf-8")
+    .replace("{{VERSION}}", html.escape(VERSION))
+    .encode("utf-8")
+)
 LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
 logger = logging.getLogger("gunicorn.error")
 

@@ -2,6 +2,8 @@
 
 FROM alpine:3.24
 
+ARG VERSION=dev
+
 RUN apk add --no-cache \
   weasyprint \
   py3-gunicorn \
@@ -13,7 +15,8 @@ WORKDIR /app
 
 COPY app.py index.html logo.svg /app/
 
-ENV PYTHONDONTWRITEBYTECODE=1 \
+ENV HTML2PDF_VERSION=$VERSION \
+  PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \
   HOME=/tmp \
   XDG_CACHE_HOME=/tmp/.cache

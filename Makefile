@@ -7,7 +7,7 @@ IMAGE ?= html2pdf
 DEV_TAG ?= dev
 HOST ?= 127.0.0.1
 PORT ?= 8080
-HTML2PDF__TOKEN ?=
+HTML2PDF_TOKEN ?=
 DOCKER_BUILD_ARGS ?=
 DOCKER_RUN_ARGS ?=
 
@@ -19,6 +19,7 @@ VERSION_PREFIX ?= v
 # Find the latest tag with the configured prefix, or use 0.0.0 when none exists.
 LATEST_TAG = $(shell git tag --list "$(VERSION_PREFIX)*" --sort=-v:refname | head -n 1)
 VERSION = $(shell [ -n "$(LATEST_TAG)" ] && echo $(LATEST_TAG) | sed "s/^$(VERSION_PREFIX)//" || echo "0.0.0")
+BUILD_VERSION ?= $(if $(LATEST_TAG),$(LATEST_TAG),dev)
 
 .PHONY: patch
 patch: ## Create a new patch release (x.y.Z+1).
@@ -54,7 +55,7 @@ test: ## Run the unit tests.
 
 .PHONY: build
 build: ## Build the development container image.
-	docker build $(DOCKER_BUILD_ARGS) -t $(IMAGE):$(DEV_TAG) .
+	docker build $(DOCKER_BUILD_ARGS) --build-arg VERSION="$(BUILD_VERSION)" -t $(IMAGE):$(DEV_TAG) .
 
 .PHONY: dev
 dev: build ## Build and run the service locally.
@@ -64,20 +65,20 @@ dev: build ## Build and run the service locally.
 
 .PHONY: dev-auth
 dev-auth: build ## Build and run locally with bearer-token authentication.
-	@test -n "$(HTML2PDF__TOKEN)" || { echo "Set HTML2PDF__TOKEN first" >&2; exit 1; }
+	@test -n "$(HTML2PDF_TOKEN)" || { echo "Set HTML2PDF_TOKEN first" >&2; exit 1; }
 	docker run --rm $(DOCKER_RUN_ARGS) \
 		-p $(HOST):$(PORT):8080 \
-		-e HTML2PDF__TOKEN="$(HTML2PDF__TOKEN)" \
+		-e HTML2PDF_TOKEN="$(HTML2PDF_TOKEN)" \
 		$(IMAGE):$(DEV_TAG)
 
 .PHONY: compose
 compose: ## Run the development stack with Docker Compose.
-	docker compose up --build
+	HTML2PDF_BUILD_VERSION="$(BUILD_VERSION)" docker compose up --build
 
 .PHONY: compose-auth
 compose-auth: ## Run the development stack with bearer-token authentication.
-	@test -n "$(HTML2PDF__TOKEN)" || { echo "Set HTML2PDF__TOKEN first" >&2; exit 1; }
-	HTML2PDF__TOKEN="$(HTML2PDF__TOKEN)" docker compose up --build
+	@test -n "$(HTML2PDF_TOKEN)" || { echo "Set HTML2PDF_TOKEN first" >&2; exit 1; }
+	HTML2PDF_BUILD_VERSION="$(BUILD_VERSION)" HTML2PDF_TOKEN="$(HTML2PDF_TOKEN)" docker compose up --build
 
 .PHONY: stop
 stop: ## Stop the Docker Compose stack.

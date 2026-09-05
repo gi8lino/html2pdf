@@ -35,6 +35,10 @@ class ServiceTests(unittest.TestCase):
         self.assertIn(b"html2pdf", result["body"])
         self.assertIn(b'class="copy-button"', result["body"])
         self.assertIn(b'href="/logo.svg"', result["body"])
+        self.assertIn(
+            f"Version <code>{app.VERSION}</code>".encode(),
+            result["body"],
+        )
 
     def test_logo(self):
         result = self.request(method="GET", path="/logo.svg")
