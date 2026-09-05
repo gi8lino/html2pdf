@@ -11,6 +11,7 @@ MAX_HTML_BYTES = 32 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
 AUTH_TOKEN = os.environ.get("HTML2PDF_TOKEN", "").strip()
 INDEX_HTML = Path(__file__).with_name("index.html").read_bytes()
+LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
 logger = logging.getLogger("gunicorn.error")
 
 
@@ -60,7 +61,7 @@ def authorized(environ):
 
 
 def application(environ, start_response):
-    """Serve the index, health check, and HTML-to-PDF render endpoint."""
+    """Serve the index, logo, health check, and HTML-to-PDF render endpoint."""
 
     def respond(status, body, content_type="text/plain; charset=utf-8", extra=()):
         start_response(
@@ -80,6 +81,9 @@ def application(environ, start_response):
 
     if path == "/" and method == "GET":
         return respond("200 OK", INDEX_HTML, "text/html; charset=utf-8")
+
+    if path == "/logo.svg" and method == "GET":
+        return respond("200 OK", LOGO_SVG, "image/svg+xml")
 
     if path == "/healthz" and method == "GET":
         return respond("200 OK", b"ok\n")

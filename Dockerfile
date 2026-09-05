@@ -11,7 +11,7 @@ RUN apk add --no-cache \
 
 WORKDIR /app
 
-COPY app.py index.html /app/
+COPY app.py index.html logo.svg /app/
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
   PYTHONUNBUFFERED=1 \

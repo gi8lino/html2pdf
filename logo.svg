@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="html2pdf logo">
+  <style>
+    .mark {
+      fill: none;
+      stroke: #18181b;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+      stroke-width: 4;
+    }
+    @media (prefers-color-scheme: dark) {
+      .mark {
+        stroke: #f4f4f5;
+      }
+    }
+  </style>
+  <path class="mark" d="M14 6h25l11 11v41H14z"/>
+  <path class="mark" d="M39 6v12h11"/>
+  <path class="mark" d="m29 27-7 6 7 6"/>
+  <path class="mark" d="m35 27 7 6-7 6"/>
+  <path class="mark" d="M23 49h18"/>
+</svg>

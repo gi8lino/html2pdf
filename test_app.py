@@ -28,9 +28,19 @@ class ServiceTests(unittest.TestCase):
     def test_index(self):
         result = self.request(method="GET", path="/")
         self.assertEqual(result["status"], "200 OK")
-        self.assertEqual(result["headers"]["Content-Type"],
-                         "text/html; charset=utf-8")
+        self.assertEqual(
+            result["headers"]["Content-Type"],
+            "text/html; charset=utf-8",
+        )
         self.assertIn(b"html2pdf", result["body"])
+        self.assertIn(b'class="copy-button"', result["body"])
+        self.assertIn(b'href="/logo.svg"', result["body"])
+
+    def test_logo(self):
+        result = self.request(method="GET", path="/logo.svg")
+        self.assertEqual(result["status"], "200 OK")
+        self.assertEqual(result["headers"]["Content-Type"], "image/svg+xml")
+        self.assertTrue(result["body"].startswith(b"<svg"))
 
     def test_health(self):
         result = self.request(method="GET", path="/healthz")
@@ -59,10 +69,15 @@ class ServiceTests(unittest.TestCase):
 
     def test_authentication_does_not_protect_index_or_health(self):
         with patch.object(app, "AUTH_TOKEN", "secret"):
-            self.assertEqual(self.request(
-                method="GET", path="/")["status"], "200 OK")
-            self.assertEqual(self.request(
-                method="GET", path="/healthz")["status"], "200 OK")
+            self.assertEqual(self.request(method="GET", path="/")["status"], "200 OK")
+            self.assertEqual(
+                self.request(method="GET", path="/healthz")["status"],
+                "200 OK",
+            )
+            self.assertEqual(
+                self.request(method="GET", path="/logo.svg")["status"],
+                "200 OK",
+            )
 
     def test_routes_and_validation(self):
         cases = [

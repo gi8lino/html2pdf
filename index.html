@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>html2pdf</title>
+    <link rel="icon" href="/logo.svg" type="image/svg+xml" />
     <style>
       :root {
         color-scheme: light dark;
@@ -27,16 +28,57 @@
         line-height: 1.2;
       }
 
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand img {
+        width: 38px;
+        height: 38px;
+      }
+
       code,
       pre {
         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       }
 
+      .code-block {
+        position: relative;
+      }
+
       pre {
         overflow-x: auto;
         padding: 16px;
+        padding-right: 82px;
         border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
         border-radius: 8px;
+      }
+
+      .copy-button {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 1;
+        padding: 5px 9px;
+        border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+        border-radius: 6px;
+        color: inherit;
+        background: Canvas;
+        font: inherit;
+        font-size: 0.78rem;
+        line-height: 1.2;
+        cursor: pointer;
+      }
+
+      .copy-button:hover {
+        background: color-mix(in srgb, currentColor 8%, Canvas);
+      }
+
+      .copy-button:focus-visible {
+        outline: 2px solid currentColor;
+        outline-offset: 2px;
       }
 
       table {
@@ -59,7 +101,7 @@
   </head>
   <body>
     <main>
-      <h1>html2pdf</h1>
+      <h1 class="brand"><img src="/logo.svg" alt="" />html2pdf</h1>
       <p>
         A small HTTP service that renders self-contained UTF-8 HTML to PDF with
         WeasyPrint.
@@ -94,21 +136,39 @@
       </table>
 
       <h2>Render a document</h2>
-      <pre><code>curl --fail-with-body \
+      <div class="code-block">
+        <button
+          class="copy-button"
+          type="button"
+          aria-label="Copy curl command"
+        >
+          Copy
+        </button>
+        <pre><code>curl --fail-with-body \
   -H 'Content-Type: text/html; charset=utf-8' \
   --data-binary @document.html \
   http://localhost:8080/render \
   -o document.pdf</code></pre>
+      </div>
 
       <p>
         If <code>HTML2PDF_TOKEN</code> is configured, also send a bearer token:
       </p>
-      <pre><code>curl --fail-with-body \
+      <div class="code-block">
+        <button
+          class="copy-button"
+          type="button"
+          aria-label="Copy curl command"
+        >
+          Copy
+        </button>
+        <pre><code>curl --fail-with-body \
   -H 'Authorization: Bearer &lt;token&gt;' \
   -H 'Content-Type: text/html; charset=utf-8' \
   --data-binary @document.html \
   http://localhost:8080/render \
   -o document.pdf</code></pre>
+      </div>
 
       <h2>Asset policy</h2>
       <p>
@@ -121,5 +181,32 @@
         Maximum HTML request size: 32 MiB. Maximum generated PDF size: 64 MiB.
       </p>
     </main>
+
+    <script>
+      for (const button of document.querySelectorAll(".copy-button")) {
+        button.addEventListener("click", async () => {
+          const code = button.parentElement.querySelector("code").textContent;
+
+          try {
+            await navigator.clipboard.writeText(code);
+          } catch {
+            const textarea = document.createElement("textarea");
+            textarea.value = code;
+            textarea.setAttribute("readonly", "");
+            textarea.style.position = "fixed";
+            textarea.style.opacity = "0";
+            document.body.appendChild(textarea);
+            textarea.select();
+            document.execCommand("copy");
+            textarea.remove();
+          }
+
+          button.textContent = "Copied";
+          window.setTimeout(() => {
+            button.textContent = "Copy";
+          }, 1200);
+        });
+      }
+    </script>
   </body>
 </html>
