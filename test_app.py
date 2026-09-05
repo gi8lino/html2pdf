@@ -252,11 +252,62 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "401 Unauthorized")
 
     def test_content_length_requires_ascii_digits(self):
-        for length in ("+12", "1_2", "１２", "١٢", "1.2", "9" * 5000):
+        for length in ("+12", "1_2", "１２", "١٢", "1.2"):
             with self.subTest(length=length), patch("app.render_document") as render:
                 result = self.request(CONTENT_LENGTH=length)
                 self.assertEqual(result["status"], "400 Bad Request")
                 render.assert_not_called()
+
+    def test_oversized_content_length_is_rejected_before_body_read(self):
+        for length in (str(self.config.max_html_bytes + 1), "9" * 5000):
+            with self.subTest(digits=len(length)), patch("app.render_document") as render:
+                result = self.request(CONTENT_LENGTH=length, **{"wsgi.input": None})
+                self.assertEqual(result["status"], "413 Content Too Large")
+                render.assert_not_called()
+
+    def test_content_length_with_leading_zeroes(self):
+        with patch("app.render_document", return_value=b"%PDF-fixture") as render:
+            result = self.request(CONTENT_LENGTH="0" * 5000 + "12")
+        self.assertEqual(result["status"], "200 OK")
+        render.assert_called_once_with("<p>Hello</p>")
+        result = self.request(CONTENT_LENGTH="0000", **{"wsgi.input": None})
+        self.assertEqual(result["status"], "400 Bad Request")
+
+    def test_utf8_charset_declarations(self):
+        content_types = (
+            "text/html",
+            "text/html; charset=utf-8",
+            'text/html; CHARSET="UTF-8"',
+            "text/html; charset=utf8",
+            'text/html; note="a;charset=latin-1"; charset=utf-8',
+            'text/html; note="a;charset=latin-1"',
+        )
+        for content_type in content_types:
+            with self.subTest(content_type=content_type), patch(
+                "app.render_document", return_value=b"%PDF-fixture"
+            ) as render:
+                result = self.request(CONTENT_TYPE=content_type)
+                self.assertEqual(result["status"], "200 OK")
+                render.assert_called_once_with("<p>Hello</p>")
+
+    def test_unsupported_charsets_are_rejected_before_body_read(self):
+        for charset in ("latin-1", "utf-16", '"ISO-8859-1"', ""):
+            with self.subTest(charset=charset), patch("app.render_document") as render:
+                result = self.request(
+                    CONTENT_TYPE=f"text/html; charset={charset}",
+                    **{"wsgi.input": None},
+                )
+                self.assertEqual(result["status"], "415 Unsupported Media Type")
+                render.assert_not_called()
+
+    def test_known_get_endpoints_reject_other_methods(self):
+        for path in ("/", "/logo.svg", "/healthz"):
+            for method in ("POST", "PUT", "DELETE", "OPTIONS"):
+                with self.subTest(path=path, method=method):
+                    result = self.request(method=method, path=path)
+                    self.assertEqual(result["status"], "405 Method Not Allowed")
+                    self.assertEqual(result["headers"]["Allow"], "GET")
+                    self.assertEqual(result["body"], b"Use GET\n")
 
     def test_empty_body_is_rejected(self):
         with patch("app.render_document") as render:

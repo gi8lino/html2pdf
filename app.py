@@ -1,6 +1,7 @@
 """Small WSGI service that renders self-contained UTF-8 HTML to PDF."""
 
 from __future__ import annotations
+
 import hmac
 import html
 import logging
@@ -8,6 +9,7 @@ import os
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
+from email.message import Message
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, BinaryIO, TypeAlias, cast
@@ -25,7 +27,7 @@ logger = logging.getLogger("gunicorn.error")
 
 # Restrict the usage page to its local logo and inline CSS/JavaScript.
 # Disable forms, base-URL overrides, framing, and referrer disclosure.
-INDEX_HEADERS = (
+INDEX_HEADERS: tuple[Header, ...] = (
     (
         "Content-Security-Policy",
         "default-src 'none'; img-src 'self'; script-src 'unsafe-inline'; "
@@ -50,50 +52,54 @@ class Config:
     max_pdf_bytes: int
 
     @classmethod
-    def from_env(cls, environ: Mapping[str, str]) -> Config:
-        """Load and validate runtime configuration from the supplied environment."""
+    def from_env(cls, env: Mapping[str, str]) -> Config:
+        """Load and validate runtime configuration."""
         return cls(
-            token=cls._env(environ, "HTML2PDF__TOKEN"),
-            version=cls._env(environ, "HTML2PDF__VERSION", "dev") or "dev",
-            source_url=cls._env(environ, "HTML2PDF__SOURCE_URL"),
+            token=cls._env(env, "HTML2PDF__TOKEN"),
+            version=cls._env(env, "HTML2PDF__VERSION", "dev") or "dev",
+            source_url=cls._env(env, "HTML2PDF__SOURCE_URL"),
             workers=cls._env_int(
-                environ,
+                env,
                 "HTML2PDF__WORKERS",
                 2,
             ),
             timeout=cls._env_int(
-                environ,
+                env,
                 "HTML2PDF__TIMEOUT",
                 45,
             ),
             max_html_bytes=cls._env_int(
-                environ,
+                env,
                 "HTML2PDF__MAX_HTML_BYTES",
                 32 * 1024 * 1024,
             ),
             max_pdf_bytes=cls._env_int(
-                environ,
+                env,
                 "HTML2PDF__MAX_PDF_BYTES",
                 64 * 1024 * 1024,
             ),
         )
 
     @staticmethod
-    def _env(environ: Mapping[str, str], name: str, default: str = "") -> str:
+    def _env(
+        env: Mapping[str, str],
+        name: str,
+        default: str = "",
+    ) -> str:
         """Read a string environment variable."""
-        return environ.get(name, default).strip()
+        return env.get(name, default).strip()
 
     @classmethod
     def _env_int(
         cls,
-        environ: Mapping[str, str],
+        env: Mapping[str, str],
         name: str,
         default: int,
         *,
         minimum: int = 1,
     ) -> int:
         """Read and validate a positive integer environment variable."""
-        value = cls._env(environ, name)
+        value = cls._env(env, name)
 
         if not value:
             return default
@@ -143,14 +149,26 @@ class Request:
         return self._string("PATH_INFO")
 
     @property
+    def content_type(self) -> str:
+        """Return the raw Content-Type value."""
+        return self._string("CONTENT_TYPE").strip()
+
+    @property
     def media_type(self) -> str:
         """Return the normalized request media type."""
-        return (
-            self._string("CONTENT_TYPE")
-            .partition(";")[0]
-            .strip()
-            .casefold()
-        )
+        return self.content_type.partition(";")[0].strip().casefold()
+
+    @property
+    def charset(self) -> str | None:
+        """Return the normalized charset parameter when supplied."""
+        # MIME parameter parsing preserves semicolons inside quoted values.
+        message = Message()
+        message["Content-Type"] = self.content_type
+        value = message.get_param("charset")
+        if value is None:
+            return None
+        # Extended parameter tuples are not supported charset declarations.
+        return value.strip().casefold() if isinstance(value, str) else ""
 
     @property
     def content_length(self) -> str:
@@ -174,13 +192,14 @@ def format_bytes(value: int) -> str:
     size = float(value)
 
     for unit in units:
-        if size < 1024 or unit == units[-1]:
-            if size.is_integer():
-                return f"{int(size)} {unit}"
+        if size >= 1024 and unit != units[-1]:
+            size /= 1024
+            continue
 
-            return f"{size:.1f} {unit}"
+        if size.is_integer():
+            return f"{int(size)} {unit}"
 
-        size /= 1024
+        return f"{size:.1f} {unit}"
 
     raise AssertionError("unreachable")
 
@@ -229,8 +248,8 @@ def render_document(source: str) -> bytes:
 
     result = HTML(
         string=source,
-        # Resolve relative assets so they reach the rejecting fetcher instead
-        # of being silently dropped by WeasyPrint as unresolved references.
+        # Resolve relative assets so they reach the rejecting fetcher rather
+        # than being silently discarded as unresolved references.
         base_url="https://html2pdf.invalid/",
         url_fetcher=fetch_asset,
     ).write_pdf()
@@ -261,8 +280,10 @@ def authorized(request: Request, config: Config) -> bool:
     if not config.token:
         return True
 
+    submitted = bearer_token(request)
+
     return hmac.compare_digest(
-        bearer_token(request).encode("utf-8"),
+        submitted.encode("utf-8"),
         config.token.encode("utf-8"),
     )
 
@@ -296,6 +317,19 @@ def respond(
     return [body]
 
 
+def method_not_allowed(
+    start_response: StartResponse,
+    allowed: str,
+) -> Response:
+    """Return a method-not-allowed response for a known endpoint."""
+    return respond(
+        start_response,
+        HTTPStatus.METHOD_NOT_ALLOWED,
+        f"Use {allowed}\n".encode(),
+        extra_headers=[("Allow", allowed)],
+    )
+
+
 def read_html(request: Request, config: Config) -> tuple[str, int]:
     """Validate and read a UTF-8 HTML request body."""
     if request.media_type != "text/html":
@@ -304,31 +338,43 @@ def read_html(request: Request, config: Config) -> tuple[str, int]:
             b"Send text/html encoded as UTF-8\n",
         )
 
-    if not request.content_length:
+    if request.charset not in (None, "utf-8", "utf8"):
+        raise RequestError(
+            HTTPStatus.UNSUPPORTED_MEDIA_TYPE,
+            b"Send text/html encoded as UTF-8\n",
+        )
+
+    content_length = request.content_length
+
+    if not content_length:
         raise RequestError(
             HTTPStatus.LENGTH_REQUIRED,
             b"Content-Length is required\n",
         )
 
-    if not request.content_length.isascii() or not request.content_length.isdecimal():
+    if not content_length.isascii() or not content_length.isdecimal():
         raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"Invalid Content-Length\n",
         )
 
-    try:
-        length = int(request.content_length)
-    except ValueError as exc:
-        raise RequestError(
-            HTTPStatus.BAD_REQUEST,
-            b"Invalid Content-Length\n",
-        ) from exc
+    normalized_length = content_length.lstrip("0") or "0"
 
-    if length <= 0:
+    if normalized_length == "0":
         raise RequestError(
             HTTPStatus.BAD_REQUEST,
             b"HTML is required\n",
         )
+
+    # Reject absurdly large values before converting attacker-controlled input.
+    max_length = str(config.max_html_bytes)
+    if len(normalized_length) > len(max_length):
+        raise RequestError(
+            HTTPStatus.CONTENT_TOO_LARGE,
+            b"HTML exceeds configured size limit\n",
+        )
+
+    length = int(normalized_length)
 
     if length > config.max_html_bytes:
         raise RequestError(
@@ -452,8 +498,11 @@ def create_application(config: Config) -> Application:
         """Serve the index, logo, health check, and HTML-to-PDF endpoint."""
         request = Request(environ)
 
-        match request.path, request.method:
-            case "/", "GET":
+        match request.path:
+            case "/":
+                if request.method != "GET":
+                    return method_not_allowed(start_response, "GET")
+
                 return respond(
                     start_response,
                     HTTPStatus.OK,
@@ -462,7 +511,10 @@ def create_application(config: Config) -> Application:
                     INDEX_HEADERS,
                 )
 
-            case "/logo.svg", "GET":
+            case "/logo.svg":
+                if request.method != "GET":
+                    return method_not_allowed(start_response, "GET")
+
                 return respond(
                     start_response,
                     HTTPStatus.OK,
@@ -470,26 +522,24 @@ def create_application(config: Config) -> Application:
                     "image/svg+xml",
                 )
 
-            case "/healthz", "GET":
+            case "/healthz":
+                if request.method != "GET":
+                    return method_not_allowed(start_response, "GET")
+
                 return respond(
                     start_response,
                     HTTPStatus.OK,
                     b"ok\n",
                 )
 
-            case "/render", "POST":
+            case "/render":
+                if request.method != "POST":
+                    return method_not_allowed(start_response, "POST")
+
                 return render_response(
                     request,
                     start_response,
                     config,
-                )
-
-            case "/render", _:
-                return respond(
-                    start_response,
-                    HTTPStatus.METHOD_NOT_ALLOWED,
-                    b"Use POST\n",
-                    extra_headers=[("Allow", "POST")],
                 )
 
             case _:
