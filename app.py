@@ -1,5 +1,6 @@
 """Small WSGI service that renders self-contained UTF-8 HTML to PDF."""
 
+from __future__ import annotations
 import hmac
 import html
 import logging
@@ -18,6 +19,22 @@ Header: TypeAlias = tuple[str, str]
 Headers: TypeAlias = list[Header]
 Response: TypeAlias = list[bytes]
 StartResponse: TypeAlias = Callable[[str, Headers], Any]
+Application: TypeAlias = Callable[[Environ, StartResponse], Response]
+
+logger = logging.getLogger("gunicorn.error")
+
+# Restrict the usage page to its local logo and inline CSS/JavaScript.
+# Disable forms, base-URL overrides, framing, and referrer disclosure.
+INDEX_HEADERS = (
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; img-src 'self'; script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+        "frame-ancestors 'none'",
+    ),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,45 +50,50 @@ class Config:
     max_pdf_bytes: int
 
     @classmethod
-    def from_env(cls) -> "Config":
-        """Load and validate runtime configuration."""
+    def from_env(cls, environ: Mapping[str, str]) -> Config:
+        """Load and validate runtime configuration from the supplied environment."""
         return cls(
-            token=cls._env("HTML2PDF__TOKEN"),
-            version=cls._env("HTML2PDF__VERSION", "dev") or "dev",
-            source_url=cls._env("HTML2PDF__SOURCE_URL"),
+            token=cls._env(environ, "HTML2PDF__TOKEN"),
+            version=cls._env(environ, "HTML2PDF__VERSION", "dev") or "dev",
+            source_url=cls._env(environ, "HTML2PDF__SOURCE_URL"),
             workers=cls._env_int(
+                environ,
                 "HTML2PDF__WORKERS",
                 2,
             ),
             timeout=cls._env_int(
+                environ,
                 "HTML2PDF__TIMEOUT",
                 45,
             ),
             max_html_bytes=cls._env_int(
+                environ,
                 "HTML2PDF__MAX_HTML_BYTES",
                 32 * 1024 * 1024,
             ),
             max_pdf_bytes=cls._env_int(
+                environ,
                 "HTML2PDF__MAX_PDF_BYTES",
                 64 * 1024 * 1024,
             ),
         )
 
     @staticmethod
-    def _env(name: str, default: str = "") -> str:
+    def _env(environ: Mapping[str, str], name: str, default: str = "") -> str:
         """Read a string environment variable."""
-        return os.environ.get(name, default).strip()
+        return environ.get(name, default).strip()
 
     @classmethod
     def _env_int(
         cls,
+        environ: Mapping[str, str],
         name: str,
         default: int,
         *,
         minimum: int = 1,
     ) -> int:
         """Read and validate a positive integer environment variable."""
-        value = cls._env(name)
+        value = cls._env(environ, name)
 
         if not value:
             return default
@@ -85,11 +107,6 @@ class Config:
             raise ValueError(f"{name} must be at least {minimum}")
 
         return result
-
-
-CONFIG = Config.from_env()
-
-logger = logging.getLogger("gunicorn.error")
 
 
 class AssetError(ValueError):
@@ -195,21 +212,6 @@ def load_index(config: Config) -> bytes:
     return page.encode("utf-8")
 
 
-INDEX_HTML = load_index(CONFIG)
-LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
-
-INDEX_HEADERS = (
-    (
-        "Content-Security-Policy",
-        "default-src 'none'; img-src 'self'; script-src 'unsafe-inline'; "
-        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
-        "frame-ancestors 'none'",
-    ),
-    ("Referrer-Policy", "no-referrer"),
-    ("X-Frame-Options", "DENY"),
-)
-
-
 def render_document(source: str) -> bytes:
     """Render one self-contained HTML document and return its PDF bytes."""
     asset_rejected = False
@@ -254,14 +256,14 @@ def bearer_token(request: Request) -> str:
     return parts[1].strip()
 
 
-def authorized(request: Request) -> bool:
+def authorized(request: Request, config: Config) -> bool:
     """Report whether the request may use the render endpoint."""
-    if not CONFIG.token:
+    if not config.token:
         return True
 
     return hmac.compare_digest(
         bearer_token(request).encode("utf-8"),
-        CONFIG.token.encode("utf-8"),
+        config.token.encode("utf-8"),
     )
 
 
@@ -294,7 +296,7 @@ def respond(
     return [body]
 
 
-def read_html(request: Request) -> tuple[str, int]:
+def read_html(request: Request, config: Config) -> tuple[str, int]:
     """Validate and read a UTF-8 HTML request body."""
     if request.media_type != "text/html":
         raise RequestError(
@@ -328,7 +330,7 @@ def read_html(request: Request) -> tuple[str, int]:
             b"HTML is required\n",
         )
 
-    if length > CONFIG.max_html_bytes:
+    if length > config.max_html_bytes:
         raise RequestError(
             HTTPStatus.CONTENT_TOO_LARGE,
             b"HTML exceeds configured size limit\n",
@@ -356,9 +358,10 @@ def read_html(request: Request) -> tuple[str, int]:
 def render_response(
     request: Request,
     start_response: StartResponse,
+    config: Config,
 ) -> Response:
     """Validate a render request, render its PDF, and return the response."""
-    if not authorized(request):
+    if not authorized(request, config):
         return respond(
             start_response,
             HTTPStatus.UNAUTHORIZED,
@@ -367,7 +370,7 @@ def render_response(
         )
 
     try:
-        source, html_bytes = read_html(request)
+        source, html_bytes = read_html(request, config)
     except RequestError as exc:
         return respond(
             start_response,
@@ -407,7 +410,7 @@ def render_response(
 
     pdf_bytes = len(result)
 
-    if pdf_bytes > CONFIG.max_pdf_bytes:
+    if pdf_bytes > config.max_pdf_bytes:
         logger.warning(
             "render rejected duration_ms=%d html_bytes=%d "
             "pdf_bytes=%d reason=pdf_too_large",
@@ -437,55 +440,66 @@ def render_response(
     )
 
 
-def application(
-    environ: Environ,
-    start_response: StartResponse,
-) -> Response:
-    """Serve the index, logo, health check, and HTML-to-PDF endpoint."""
-    request = Request(environ)
+def create_application(config: Config) -> Application:
+    """Create a WSGI application with its own configuration and cached assets."""
+    index_html = load_index(config)
+    logo_svg = Path(__file__).with_name("logo.svg").read_bytes()
 
-    match request.path, request.method:
-        case "/", "GET":
-            return respond(
-                start_response,
-                HTTPStatus.OK,
-                INDEX_HTML,
-                "text/html; charset=utf-8",
-                INDEX_HEADERS,
-            )
+    def application(
+        environ: Environ,
+        start_response: StartResponse,
+    ) -> Response:
+        """Serve the index, logo, health check, and HTML-to-PDF endpoint."""
+        request = Request(environ)
 
-        case "/logo.svg", "GET":
-            return respond(
-                start_response,
-                HTTPStatus.OK,
-                LOGO_SVG,
-                "image/svg+xml",
-            )
+        match request.path, request.method:
+            case "/", "GET":
+                return respond(
+                    start_response,
+                    HTTPStatus.OK,
+                    index_html,
+                    "text/html; charset=utf-8",
+                    INDEX_HEADERS,
+                )
 
-        case "/healthz", "GET":
-            return respond(
-                start_response,
-                HTTPStatus.OK,
-                b"ok\n",
-            )
+            case "/logo.svg", "GET":
+                return respond(
+                    start_response,
+                    HTTPStatus.OK,
+                    logo_svg,
+                    "image/svg+xml",
+                )
 
-        case "/render", "POST":
-            return render_response(
-                request,
-                start_response,
-            )
+            case "/healthz", "GET":
+                return respond(
+                    start_response,
+                    HTTPStatus.OK,
+                    b"ok\n",
+                )
 
-        case "/render", _:
-            return respond(
-                start_response,
-                HTTPStatus.METHOD_NOT_ALLOWED,
-                b"Use POST\n",
-                extra_headers=[("Allow", "POST")],
-            )
+            case "/render", "POST":
+                return render_response(
+                    request,
+                    start_response,
+                    config,
+                )
 
-        case _:
-            return respond(
-                start_response,
-                HTTPStatus.NOT_FOUND,
-                b"Not found\n",
-            )
+            case "/render", _:
+                return respond(
+                    start_response,
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    b"Use POST\n",
+                    extra_headers=[("Allow", "POST")],
+                )
+
+            case _:
+                return respond(
+                    start_response,
+                    HTTPStatus.NOT_FOUND,
+                    b"Not found\n",
+                )
+
+    return application
+
+
+application = create_application(Config.from_env(os.environ))

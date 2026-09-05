@@ -1,21 +1,25 @@
 import io
-import os
 from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
 import app
-from app import AssetError, application, render_document
+from app import AssetError, render_document
 
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
-        self.config = replace(app.CONFIG, token="", version="test",
-                              max_html_bytes=1024, max_pdf_bytes=65536)
-        self.enterContext(patch.object(app, "CONFIG", self.config))
-        self.enterContext(patch.object(app, "INDEX_HTML", app.load_index(self.config)))
+        self.config = app.Config(
+            token="", version="test", source_url="", workers=2, timeout=45,
+            max_html_bytes=1024, max_pdf_bytes=65536,
+        )
+        self.application = app.create_application(self.config)
 
-    def request(self, method="POST", path="/render", body=b"<p>Hello</p>", **overrides):
+    def configure(self, **overrides):
+        self.config = replace(self.config, **overrides)
+        self.application = app.create_application(self.config)
+
+    def request(self, method="POST", path="/render", body=b"<p>Hello</p>", application=None, **overrides):
         environ = {
             "REQUEST_METHOD": method,
             "PATH_INFO": path,
@@ -30,7 +34,7 @@ class ServiceTests(unittest.TestCase):
             response["status"] = status
             response["headers"] = dict(headers)
 
-        response["body"] = b"".join(application(environ, start))
+        response["body"] = b"".join((application or self.application)(environ, start))
         return response
 
     def test_index(self):
@@ -52,6 +56,43 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("frame-ancestors 'none'", csp)
         self.assertEqual(result["headers"]["X-Frame-Options"], "DENY")
         self.assertEqual(result["headers"]["Referrer-Policy"], "no-referrer")
+
+    def test_applications_keep_configuration_and_pages_isolated(self):
+        original = self.application
+        self.configure(token="secret", version="other", max_html_bytes=1)
+        with patch("app.render_document", return_value=b"%PDF-fixture"):
+            self.assertEqual(self.request()["status"], "401 Unauthorized")
+            self.assertEqual(
+                self.request(HTTP_AUTHORIZATION="Bearer secret")["status"],
+                "413 Content Too Large",
+            )
+            self.assertEqual(self.request(application=original)["status"], "200 OK")
+        for application, version in ((original, "test"), (self.application, "other")):
+            result = self.request(method="GET", path="/", application=application)
+            self.assertIn(f'<span class="version">{version}</span>'.encode(), result["body"])
+
+    def test_assets_are_loaded_once_per_application(self):
+        with (
+            patch("app.load_index", return_value=b"cached page") as index,
+            patch.object(app.Path, "read_bytes", return_value=b"cached logo") as logo,
+        ):
+            application = app.create_application(self.config)
+            for _ in range(2):
+                self.assertEqual(
+                    self.request(method="GET", path="/", application=application)["body"],
+                    b"cached page",
+                )
+                self.assertEqual(
+                    self.request(method="GET", path="/logo.svg", application=application)["body"],
+                    b"cached logo",
+                )
+            index.assert_called_once_with(self.config)
+            logo.assert_called_once_with()
+
+    def test_module_wsgi_entry_point_serves_health(self):
+        result = self.request(method="GET", path="/healthz", application=app.application)
+        self.assertEqual(result["status"], "200 OK")
+        self.assertEqual(result["body"], b"ok\n")
 
     def test_logo(self):
         result = self.request(method="GET", path="/logo.svg")
@@ -94,11 +135,11 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("html_bytes=12", logs.output[-1])
 
     def test_optional_bearer_authentication(self):
-        with patch.object(app, "CONFIG", replace(self.config, token="secret")):
-            missing = self.request()
-            wrong = self.request(HTTP_AUTHORIZATION="Bearer nope")
-            with patch("app.render_document", return_value=b"%PDF-fixture"):
-                valid = self.request(HTTP_AUTHORIZATION="Bearer secret")
+        self.configure(token="secret")
+        missing = self.request()
+        wrong = self.request(HTTP_AUTHORIZATION="Bearer nope")
+        with patch("app.render_document", return_value=b"%PDF-fixture"):
+            valid = self.request(HTTP_AUTHORIZATION="Bearer secret")
 
         self.assertEqual(missing["status"], "401 Unauthorized")
         self.assertEqual(missing["headers"]["WWW-Authenticate"], "Bearer")
@@ -106,16 +147,16 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(valid["status"], "200 OK")
 
     def test_authentication_does_not_protect_index_or_health(self):
-        with patch.object(app, "CONFIG", replace(self.config, token="secret")):
-            self.assertEqual(self.request(method="GET", path="/")["status"], "200 OK")
-            self.assertEqual(
-                self.request(method="GET", path="/healthz")["status"],
-                "200 OK",
-            )
-            self.assertEqual(
-                self.request(method="GET", path="/logo.svg")["status"],
-                "200 OK",
-            )
+        self.configure(token="secret")
+        self.assertEqual(self.request(method="GET", path="/")["status"], "200 OK")
+        self.assertEqual(
+            self.request(method="GET", path="/healthz")["status"],
+            "200 OK",
+        )
+        self.assertEqual(
+            self.request(method="GET", path="/logo.svg")["status"],
+            "200 OK",
+        )
 
     def test_routes_and_validation(self):
         cases = [
@@ -158,8 +199,8 @@ class ServiceTests(unittest.TestCase):
         self.assertTrue(result.startswith(b"%PDF-"))
 
     def test_generated_pdf_size_limit(self):
+        self.configure(max_pdf_bytes=3)
         with (
-            patch.object(app, "CONFIG", replace(self.config, max_pdf_bytes=3)),
             patch("app.render_document", return_value=b"1234"),
             self.assertLogs("gunicorn.error", level="WARNING") as logs,
         ):
@@ -178,19 +219,19 @@ class ServiceTests(unittest.TestCase):
             "Bearer wrong",
         ]
 
-        with patch.object(app, "CONFIG", replace(self.config, token="secret")):
-            for authorization in authorizations:
-                with self.subTest(authorization=authorization):
-                    result = self.request(HTTP_AUTHORIZATION=authorization)
-                    self.assertEqual(result["status"], "401 Unauthorized")
+        self.configure(token="secret")
+        for authorization in authorizations:
+            with self.subTest(authorization=authorization):
+                result = self.request(HTTP_AUTHORIZATION=authorization)
+                self.assertEqual(result["status"], "401 Unauthorized")
 
     def test_real_pdf_render(self):
         result = render_document("<h1>Hello</h1><p>Rendered by html2pdf.</p>")
         self.assertTrue(result.startswith(b"%PDF-"))
 
     def test_non_ascii_authorization_is_rejected_without_rendering(self):
+        self.configure(token="secret")
         with (
-            patch.object(app, "CONFIG", replace(self.config, token="secret")),
             patch("app.render_document") as render,
         ):
             result = self.request(HTTP_AUTHORIZATION="Bearer séc ret")
@@ -198,16 +239,16 @@ class ServiceTests(unittest.TestCase):
         render.assert_not_called()
 
     def test_bearer_scheme_is_case_insensitive(self):
+        self.configure(token="secret")
         with (
-            patch.object(app, "CONFIG", replace(self.config, token="secret")),
             patch("app.render_document", return_value=b"%PDF-fixture"),
         ):
             result = self.request(HTTP_AUTHORIZATION="  bEaReR   secret  ")
         self.assertEqual(result["status"], "200 OK")
 
     def test_authentication_precedes_body_read(self):
-        with patch.object(app, "CONFIG", replace(self.config, token="secret")):
-            result = self.request(CONTENT_TYPE="application/json", **{"wsgi.input": None})
+        self.configure(token="secret")
+        result = self.request(CONTENT_TYPE="application/json", **{"wsgi.input": None})
         self.assertEqual(result["status"], "401 Unauthorized")
 
     def test_content_length_requires_ascii_digits(self):
@@ -225,8 +266,8 @@ class ServiceTests(unittest.TestCase):
 
     def test_html_limit_is_inclusive_and_counts_utf8_bytes(self):
         body = "<p>é</p>".encode()
+        self.configure(max_html_bytes=len(body))
         with (
-            patch.object(app, "CONFIG", replace(self.config, max_html_bytes=len(body))),
             patch("app.render_document", return_value=b"%PDF-fixture") as render,
         ):
             result = self.request(body=body, CONTENT_TYPE="TEXT/HTML; charset=UTF-8")
@@ -238,8 +279,8 @@ class ServiceTests(unittest.TestCase):
             render.assert_not_called()
 
     def test_pdf_limit_is_inclusive(self):
+        self.configure(max_pdf_bytes=4)
         with (
-            patch.object(app, "CONFIG", replace(self.config, max_pdf_bytes=4)),
             patch("app.render_document", return_value=b"1234"),
         ):
             result = self.request()
@@ -298,19 +339,17 @@ class ServiceTests(unittest.TestCase):
 
 class ConfigTests(unittest.TestCase):
     def test_defaults_are_independent_of_host_environment(self):
-        with patch.dict(os.environ, {}, clear=True):
-            config = app.Config.from_env()
+        config = app.Config.from_env({})
         self.assertEqual(config, app.Config("", "dev", "", 2, 45,
                                             32 * 1024 * 1024, 64 * 1024 * 1024))
 
     def test_environment_overrides_and_whitespace(self):
-        with patch.dict(os.environ, {
+        config = app.Config.from_env({
             "HTML2PDF__TOKEN": " secret ", "HTML2PDF__VERSION": " v1 ",
             "HTML2PDF__SOURCE_URL": " https://example.com/repo ",
             "HTML2PDF__WORKERS": " 3 ", "HTML2PDF__TIMEOUT": "60",
             "HTML2PDF__MAX_HTML_BYTES": "100", "HTML2PDF__MAX_PDF_BYTES": "200",
-        }, clear=True):
-            config = app.Config.from_env()
+        })
         self.assertEqual(config, app.Config("secret", "v1", "https://example.com/repo",
                                             3, 60, 100, 200))
 
@@ -318,16 +357,13 @@ class ConfigTests(unittest.TestCase):
         for name in ("WORKERS", "TIMEOUT", "MAX_HTML_BYTES", "MAX_PDF_BYTES"):
             for value in ("0", "-1", "nope", "1.5"):
                 key = f"HTML2PDF__{name}"
-                with self.subTest(key=key, value=value), patch.dict(
-                    os.environ, {key: value}, clear=True
-                ), self.assertRaisesRegex(ValueError, key):
-                    app.Config.from_env()
+                with self.subTest(key=key, value=value), self.assertRaisesRegex(ValueError, key):
+                    app.Config.from_env({key: value})
 
     def test_blank_values_use_defaults(self):
-        with patch.dict(os.environ, {
+        config = app.Config.from_env({
             "HTML2PDF__VERSION": " ", "HTML2PDF__WORKERS": " ",
-        }, clear=True):
-            config = app.Config.from_env()
+        })
         self.assertEqual(config.version, "dev")
         self.assertEqual(config.workers, 2)
 
