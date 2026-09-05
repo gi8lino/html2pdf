@@ -39,6 +39,11 @@ class ServiceTests(unittest.TestCase):
             f"Version <code>{app.VERSION}</code>".encode(),
             result["body"],
         )
+        csp = result["headers"]["Content-Security-Policy"]
+        self.assertIn("default-src 'none'", csp)
+        self.assertIn("frame-ancestors 'none'", csp)
+        self.assertEqual(result["headers"]["X-Frame-Options"], "DENY")
+        self.assertEqual(result["headers"]["Referrer-Policy"], "no-referrer")
 
     def test_logo(self):
         result = self.request(method="GET", path="/logo.svg")

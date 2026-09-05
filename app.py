@@ -21,6 +21,16 @@ INDEX_HTML = (
     .encode("utf-8")
 )
 LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
+INDEX_HEADERS = (
+    (
+        "Content-Security-Policy",
+        "default-src 'none'; img-src 'self'; script-src 'unsafe-inline'; "
+        "style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'; "
+        "frame-ancestors 'none'",
+    ),
+    ("Referrer-Policy", "no-referrer"),
+    ("X-Frame-Options", "DENY"),
+)
 logger = logging.getLogger("gunicorn.error")
 
 
@@ -89,7 +99,12 @@ def application(environ, start_response):
     method = environ.get("REQUEST_METHOD", "")
 
     if path == "/" and method == "GET":
-        return respond("200 OK", INDEX_HTML, "text/html; charset=utf-8")
+        return respond(
+            "200 OK",
+            INDEX_HTML,
+            "text/html; charset=utf-8",
+            extra=INDEX_HEADERS,
+        )
 
     if path == "/logo.svg" and method == "GET":
         return respond("200 OK", LOGO_SVG, "image/svg+xml")
