@@ -4,7 +4,7 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
     environment:
-      HTML2PDF_TOKEN: ${HTML2PDF_TOKEN:-}
+      HTML2PDF__TOKEN: ${HTML2PDF__TOKEN:-}
     read_only: true
     tmpfs:
       - /tmp:size=128m,mode=1777

@@ -9,7 +9,7 @@ from weasyprint import HTML, default_url_fetcher
 
 MAX_HTML_BYTES = 32 * 1024 * 1024
 MAX_PDF_BYTES = 64 * 1024 * 1024
-AUTH_TOKEN = os.environ.get("HTML2PDF_TOKEN", "").strip()
+AUTH_TOKEN = os.environ.get("HTML2PDF__TOKEN", "").strip()
 INDEX_HTML = Path(__file__).with_name("index.html").read_bytes()
 LOGO_SVG = Path(__file__).with_name("logo.svg").read_bytes()
 logger = logging.getLogger("gunicorn.error")
