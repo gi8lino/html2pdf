@@ -40,6 +40,47 @@ INDEX_HEADERS: tuple[Header, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
+class EnvValue:
+    """Environment variable value with typed conversion helpers."""
+
+    name: str
+    raw: str | None
+
+    def as_str(self, default: str = "") -> str:
+        """Return the value as a stripped string."""
+        if self.raw is None:
+            return default
+
+        return self.raw.strip() or default
+
+    def as_int(self, *, default: int, minimum: int = 1) -> int:
+        """Return the value as a validated integer."""
+        if self.raw is None or not self.raw.strip():
+            return default
+
+        try:
+            value = int(self.raw)
+        except ValueError as exc:
+            raise ValueError(f"{self.name} must be an integer") from exc
+
+        if value < minimum:
+            raise ValueError(f"{self.name} must be at least {minimum}")
+
+        return value
+
+
+@dataclass(frozen=True, slots=True)
+class Env:
+    """Typed access to environment variables."""
+
+    values: Mapping[str, str]
+
+    def value(self, name: str) -> EnvValue:
+        """Return an environment variable value."""
+        return EnvValue(name, self.values.get(name))
+
+
+@dataclass(frozen=True, slots=True)
 class Config:
     """Runtime configuration loaded from environment variables."""
 
@@ -52,68 +93,19 @@ class Config:
     listen_address: str = "0.0.0.0:8080"
 
     @classmethod
-    def from_env(cls, env: Mapping[str, str]) -> Config:
+    def from_env(cls, values: Mapping[str, str]) -> Config:
         """Load and validate runtime configuration."""
+        env = Env(values)
+
         return cls(
-            token=cls._env(env, "HTML2PDF__TOKEN"),
-            version=cls._env(env, "HTML2PDF__VERSION", "dev") or "dev",
-            listen_address=cls._env(
-                env, "HTML2PDF__LISTEN_ADDRESS", "0.0.0.0:8080"),
-            workers=cls._env_int(
-                env,
-                "HTML2PDF__WORKERS",
-                2,
-            ),
-            timeout=cls._env_int(
-                env,
-                "HTML2PDF__TIMEOUT",
-                45,
-            ),
-            max_html_bytes=cls._env_int(
-                env,
-                "HTML2PDF__MAX_HTML_BYTES",
-                32 * 1024 * 1024,
-            ),
-            max_pdf_bytes=cls._env_int(
-                env,
-                "HTML2PDF__MAX_PDF_BYTES",
-                64 * 1024 * 1024,
-            ),
+            token=env.value("HTML2PDF__TOKEN").as_str(),
+            version=env.value("HTML2PDF__VERSION").as_str(default="dev"),
+            listen_address=env.value("HTML2PDF__LISTEN_ADDRESS").as_str(default="0.0.0.0:8080"),
+            workers=env.value("HTML2PDF__WORKERS").as_int(default=2),
+            timeout=env.value("HTML2PDF__TIMEOUT").as_int(default=45),
+            max_html_bytes=env.value("HTML2PDF__MAX_HTML_BYTES").as_int(default=32 * 1024 * 1024),
+            max_pdf_bytes=env.value("HTML2PDF__MAX_PDF_BYTES").as_int(default=64 * 1024 * 1024),
         )
-
-    @staticmethod
-    def _env(
-        env: Mapping[str, str],
-        name: str,
-        default: str = "",
-    ) -> str:
-        """Read a string environment variable."""
-        return env.get(name, default).strip()
-
-    @classmethod
-    def _env_int(
-        cls,
-        env: Mapping[str, str],
-        name: str,
-        default: int,
-        *,
-        minimum: int = 1,
-    ) -> int:
-        """Read and validate a positive integer environment variable."""
-        value = cls._env(env, name)
-
-        if not value:
-            return default
-
-        try:
-            result = int(value)
-        except ValueError as exc:
-            raise ValueError(f"{name} must be an integer") from exc
-
-        if result < minimum:
-            raise ValueError(f"{name} must be at least {minimum}")
-
-        return result
 
 
 class AssetError(ValueError):
@@ -217,17 +209,10 @@ def load_index(config: Config) -> bytes:
         "{{MAX_PDF_SIZE}}": format_bytes(config.max_pdf_bytes),
     }
 
-    page = (
-        Path(__file__)
-        .with_name("index.html")
-        .read_text(encoding="utf-8")
-    )
+    page = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 
     for placeholder, value in replacements.items():
-        page = page.replace(
-            placeholder,
-            html.escape(value, quote=True),
-        )
+        page = page.replace(placeholder, html.escape(value, quote=True))
 
     return page.encode("utf-8")
 
@@ -283,10 +268,7 @@ def authorized(request: Request, config: Config) -> bool:
 
     submitted = bearer_token(request)
 
-    return hmac.compare_digest(
-        submitted.encode("utf-8"),
-        config.token.encode("utf-8"),
-    )
+    return hmac.compare_digest(submitted.encode("utf-8"), config.token.encode("utf-8"))
 
 
 def duration_ms(started: float) -> int:
@@ -310,18 +292,12 @@ def respond(
         *extra_headers,
     ]
 
-    start_response(
-        f"{status.value} {status.phrase}",
-        headers,
-    )
+    start_response(f"{status.value} {status.phrase}", headers)
 
     return [body]
 
 
-def method_not_allowed(
-    start_response: StartResponse,
-    allowed: str,
-) -> Response:
+def method_not_allowed(start_response: StartResponse, allowed: str) -> Response:
     """Return a method-not-allowed response for a known endpoint."""
     return respond(
         start_response,
@@ -459,8 +435,7 @@ def render_response(
 
     if pdf_bytes > config.max_pdf_bytes:
         logger.warning(
-            "render rejected duration_ms=%d html_bytes=%d "
-            "pdf_bytes=%d reason=pdf_too_large",
+            "render rejected duration_ms=%d html_bytes=%d pdf_bytes=%d reason=pdf_too_large",
             duration_ms(started),
             html_bytes,
             pdf_bytes,
@@ -492,10 +467,7 @@ def create_application(config: Config) -> Application:
     index_html = load_index(config)
     logo_svg = Path(__file__).with_name("logo.svg").read_bytes()
 
-    def application(
-        environ: Environ,
-        start_response: StartResponse,
-    ) -> Response:
+    def application(environ: Environ, start_response: StartResponse) -> Response:
         """Serve the index, logo, health check, and HTML-to-PDF endpoint."""
         request = Request(environ)
 
