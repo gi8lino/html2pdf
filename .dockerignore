@@ -2,4 +2,5 @@
 !app.py
 !index.html
 !logo.svg
+!gunicorn.conf.py
 !Dockerfile
