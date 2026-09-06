@@ -44,13 +44,6 @@
         text-underline-offset: 3px;
       }
 
-      .header {
-        display: flex;
-        align-items: flex-start;
-        justify-content: space-between;
-        gap: 24px;
-      }
-
       .brand {
         display: flex;
         align-items: center;
@@ -63,13 +56,10 @@
         height: 38px;
       }
 
-      .header-meta {
-        display: flex;
+      .github-link {
+        display: inline-flex;
         align-items: center;
-        gap: 12px;
-        margin-top: 8px;
-        white-space: nowrap;
-        font-size: 0.9rem;
+        gap: 6px;
       }
 
       .version {
@@ -87,6 +77,13 @@
 
       code {
         font-size: 0.92em;
+      }
+
+      p code {
+        padding: 0.1em 0.35em;
+        border-radius: 4px;
+        background: color-mix(in srgb, currentColor 8%, transparent);
+        white-space: nowrap;
       }
 
       .code-block {
@@ -145,11 +142,10 @@
         font-weight: 600;
       }
 
-      .muted {
-        opacity: 0.72;
-      }
-
       footer {
+        display: flex;
+        align-items: center;
+        gap: 12px;
         margin-top: 48px;
         padding-top: 20px;
         border-top: 1px solid color-mix(in srgb, currentColor 18%, transparent);
@@ -159,15 +155,6 @@
       @media (max-width: 560px) {
         body {
           padding: 32px 18px;
-        }
-
-        .header {
-          flex-direction: column;
-          gap: 8px;
-        }
-
-        .header-meta {
-          margin-top: 0;
         }
 
         th,
@@ -181,7 +168,7 @@
 
   <body>
     <main>
-      <header class="header">
+      <header>
         <div>
           <h1 class="brand">
             <img src="/logo.svg" alt="" />
@@ -190,16 +177,8 @@
 
           <p>
             A small HTTP service that renders self-contained UTF-8 HTML to PDF
-            with WeasyPrint.
+            with <a href="https://weasyprint.org/">WeasyPrint</a>.
           </p>
-        </div>
-
-        <div class="header-meta">
-          <span class="version">{{VERSION}}</span>
-
-          <a href="{{SOURCE_URL}}" target="_blank" rel="noopener noreferrer">
-            GitHub
-          </a>
         </div>
       </header>
 
@@ -328,31 +307,42 @@
         </tbody>
       </table>
 
-      <p>
-        The listen address is inside the container. Docker port mappings control
-        the host address and port used to reach the service. If you change the
-        listening port, update the container port in the mapping to match.
-      </p>
-
       <h2>Asset policy</h2>
 
       <p>
-        Documents must be self-contained. Images, fonts, and other resources
-        must be embedded using <code>data:</code> URLs.
+        Documents must be self-contained. Embed images, fonts, and other assets
+        using <code>data:</code> URLs.
       </p>
 
       <p>
-        HTTP(S) resources, local files, and other external assets are
-        intentionally rejected. This prevents submitted documents from using the
-        renderer for network or local file access.
+        External assets, including HTTP(S) URLs and local files, are rejected to
+        prevent network and filesystem access.
       </p>
     </main>
 
-    <footer class="muted">
-      html2pdf <code>{{VERSION}}</code>
-      · powered by WeasyPrint ·
-      <a href="{{SOURCE_URL}}" target="_blank" rel="noopener noreferrer">
-        source on GitHub
+    <footer>
+      <span class="version">{{VERSION}}</span>
+
+      <a
+        class="github-link"
+        aria-label="View source on GitHub"
+        title="View source on GitHub"
+        href="https://github.com/gi8lino/html2pdf"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 16 16"
+          fill="currentColor"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
+          />
+        </svg>
       </a>
     </footer>
 

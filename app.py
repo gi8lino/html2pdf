@@ -45,7 +45,6 @@ class Config:
 
     token: str
     version: str
-    source_url: str
     workers: int
     timeout: int
     max_html_bytes: int
@@ -58,7 +57,6 @@ class Config:
         return cls(
             token=cls._env(env, "HTML2PDF__TOKEN"),
             version=cls._env(env, "HTML2PDF__VERSION", "dev") or "dev",
-            source_url=cls._env(env, "HTML2PDF__SOURCE_URL"),
             listen_address=cls._env(
                 env, "HTML2PDF__LISTEN_ADDRESS", "0.0.0.0:8080"),
             workers=cls._env_int(
@@ -211,7 +209,6 @@ def load_index(config: Config) -> bytes:
     """Load the usage page and substitute runtime information."""
     replacements = {
         "{{VERSION}}": config.version,
-        "{{SOURCE_URL}}": config.source_url,
         "{{AUTH_STATUS}}": "enabled" if config.token else "disabled",
         "{{WORKERS}}": str(config.workers),
         "{{LISTEN_ADDRESS}}": config.listen_address,

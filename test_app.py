@@ -10,7 +10,7 @@ from app import AssetError, render_document
 class ServiceTests(unittest.TestCase):
     def setUp(self):
         self.config = app.Config(
-            token="", version="test", source_url="", workers=2, timeout=45,
+            token="", version="test", workers=2, timeout=45,
             max_html_bytes=1024, max_pdf_bytes=65536,
         )
         self.application = app.create_application(self.config)
@@ -46,6 +46,8 @@ class ServiceTests(unittest.TestCase):
             "text/html; charset=utf-8",
         )
         self.assertIn(b"html2pdf", result["body"])
+        self.assertEqual(result["body"].count(
+            b'href="https://github.com/gi8lino/html2pdf"'), 1)
         self.assertIn(b'class="copy-button"', result["body"])
         self.assertIn(b'href="/logo.svg"', result["body"])
         self.assertIn(
@@ -421,17 +423,16 @@ class ConfigTests(unittest.TestCase):
 
     def test_defaults_are_independent_of_host_environment(self):
         config = app.Config.from_env({})
-        self.assertEqual(config, app.Config("", "dev", "", 2, 45,
+        self.assertEqual(config, app.Config("", "dev", 2, 45,
                                             32 * 1024 * 1024, 64 * 1024 * 1024))
 
     def test_environment_overrides_and_whitespace(self):
         config = app.Config.from_env({
             "HTML2PDF__TOKEN": " secret ", "HTML2PDF__VERSION": " v1 ",
-            "HTML2PDF__SOURCE_URL": " https://example.com/repo ",
             "HTML2PDF__WORKERS": " 3 ", "HTML2PDF__TIMEOUT": "60",
             "HTML2PDF__MAX_HTML_BYTES": "100", "HTML2PDF__MAX_PDF_BYTES": "200",
         })
-        self.assertEqual(config, app.Config("secret", "v1", "https://example.com/repo",
+        self.assertEqual(config, app.Config("secret", "v1",
                                             3, 60, 100, 200))
 
     def test_invalid_numeric_configuration_fails_startup(self):
@@ -449,11 +450,10 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.workers, 2)
 
     def test_index_escapes_configuration_and_never_displays_token(self):
-        config = app.Config('hidden-secret', '<test>', 'https://example.com/"&',
+        config = app.Config('hidden-secret', '<test>',
                             3, 60, 1536, 2048)
         page = app.load_index(config).decode()
         self.assertIn('&lt;test&gt;', page)
-        self.assertIn('https://example.com/&quot;&amp;', page)
         self.assertIn('enabled', page)
         self.assertIn('1.5 KiB', page)
         self.assertIn('2 KiB', page)
