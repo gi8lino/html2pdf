@@ -10,11 +10,14 @@ import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
 from email.message import Message
+from enum import StrEnum
 from http import HTTPStatus
 from pathlib import Path
 from typing import Any, BinaryIO, TypeAlias, cast
+from urllib.parse import urlsplit
 
-from weasyprint import HTML, default_url_fetcher
+from weasyprint import HTML
+from weasyprint.urls import URLFetcher
 
 Environ: TypeAlias = Mapping[str, Any]
 Header: TypeAlias = tuple[str, str]
@@ -24,6 +27,22 @@ StartResponse: TypeAlias = Callable[[str, Headers], Any]
 Application: TypeAlias = Callable[[Environ, StartResponse], Response]
 
 logger = logging.getLogger("gunicorn.error")
+
+
+class AssetPolicy(StrEnum):
+    """Control which asset URL schemes submitted documents may fetch."""
+
+    EMBEDDED = "embedded"
+    REMOTE = "remote"
+
+    @property
+    def allowed_schemes(self) -> frozenset[str]:
+        """Return URL schemes allowed by this policy."""
+        if self is AssetPolicy.REMOTE:
+            return frozenset(("data", "http", "https"))
+
+        return frozenset(("data",))
+
 
 # Restrict the usage page to its local logo and inline CSS/JavaScript.
 # Disable forms, base-URL overrides, framing, and referrer disclosure.
@@ -50,6 +69,7 @@ class Config:
     max_html_bytes: int
     max_pdf_bytes: int
     listen_address: str = "0.0.0.0:8080"
+    asset_policy: AssetPolicy = AssetPolicy.EMBEDDED
 
     @classmethod
     def from_env(cls, env: Mapping[str, str]) -> Config:
@@ -62,12 +82,25 @@ class Config:
             timeout=cls._env_int(env, "HTML2PDF__TIMEOUT", 45),
             max_html_bytes=cls._env_int(env, "HTML2PDF__MAX_HTML_BYTES", 32 * 1024 * 1024),
             max_pdf_bytes=cls._env_int(env, "HTML2PDF__MAX_PDF_BYTES", 64 * 1024 * 1024),
+            asset_policy=cls._env_asset_policy(env),
         )
 
     @staticmethod
     def _env_str(env: Mapping[str, str], name: str, default: str = "") -> str:
         """Read a stripped string, using the default for blank values."""
         return env.get(name, "").strip() or default
+
+    @classmethod
+    def _env_asset_policy(cls, env: Mapping[str, str]) -> AssetPolicy:
+        """Read and validate the asset-fetching policy."""
+        name = "HTML2PDF__ASSET_POLICY"
+        value = cls._env_str(env, name, AssetPolicy.EMBEDDED.value).casefold()
+
+        try:
+            return AssetPolicy(value)
+        except ValueError:
+            allowed = ", ".join(policy.value for policy in AssetPolicy)
+            raise ValueError(f"{name} must be one of: {allowed}") from None
 
     @classmethod
     def _env_int(cls, env: Mapping[str, str], name: str, default: int, *, minimum: int = 1) -> int:
@@ -88,7 +121,7 @@ class Config:
 
 
 class AssetError(ValueError):
-    """A document references an asset outside its submitted data URLs."""
+    """A document references an asset rejected by the configured policy."""
 
 
 class RequestError(ValueError):
@@ -186,6 +219,7 @@ def load_index(config: Config) -> bytes:
         "{{TIMEOUT}}": str(config.timeout),
         "{{MAX_HTML_SIZE}}": format_bytes(config.max_html_bytes),
         "{{MAX_PDF_SIZE}}": format_bytes(config.max_pdf_bytes),
+        "{{ASSET_POLICY}}": config.asset_policy.value,
     }
 
     page = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
@@ -196,33 +230,43 @@ def load_index(config: Config) -> bytes:
     return page.encode("utf-8")
 
 
-def render_document(source: str) -> bytes:
-    """Render one self-contained HTML document and return its PDF bytes."""
-    asset_rejected = False
+def render_document(source: str, asset_policy: AssetPolicy = AssetPolicy.EMBEDDED) -> bytes:
+    """Render one HTML document using the configured asset-fetching policy."""
 
-    def fetch_asset(url: str, *args: Any, **kwargs: Any) -> Any:
-        nonlocal asset_rejected
+    class AssetFetcher(URLFetcher):
+        """Reject asset schemes that are not enabled by the configured policy."""
 
-        # Never give submitted HTML access to container files, cloud metadata,
-        # private services, or the public internet. Callers must embed assets.
-        if not url.startswith("data:"):
-            asset_rejected = True
-            raise AssetError("Assets must be embedded as data URLs")
+        def __init__(self) -> None:
+            # Redirects stay disabled so an allowed HTTP(S) URL cannot redirect
+            # to a scheme outside the policy before it is validated here.
+            super().__init__(allow_redirects=False)
+            self.rejected = False
 
-        return default_url_fetcher(url, *args, **kwargs)
+        def fetch(self, url: str, headers: Mapping[str, str] | None = None) -> Any:
+            scheme = urlsplit(url).scheme.casefold()
 
+            if scheme not in asset_policy.allowed_schemes:
+                self.rejected = True
+                raise AssetError(
+                    f"Asset URL scheme {scheme or '<none>'!r} is not allowed "
+                    f"by policy {asset_policy.value!r}"
+                )
+
+            return super().fetch(url, headers)
+
+    fetcher = AssetFetcher()
     result = HTML(
         string=source,
-        # Resolve relative assets so they reach the rejecting fetcher rather
-        # than being silently discarded as unresolved references.
+        # Resolve relative assets so they reach the policy fetcher rather than
+        # being silently discarded as unresolved references.
         base_url="https://html2pdf.invalid/",
-        url_fetcher=fetch_asset,
+        url_fetcher=fetcher,
     ).write_pdf()
 
-    # WeasyPrint can log asset failures and continue. Turn rejected assets into
-    # a hard error so callers never receive a silently incomplete document.
-    if asset_rejected:
-        raise AssetError("Assets must be embedded as data URLs")
+    # WeasyPrint can log asset failures and continue. Turn policy rejections
+    # into a hard error so callers never receive a silently incomplete PDF.
+    if fetcher.rejected:
+        raise AssetError(f"Asset rejected by {asset_policy.value!r} policy")
 
     return result
 
@@ -383,7 +427,7 @@ def render_response(
     started = time.perf_counter()
 
     try:
-        result = render_document(source)
+        result = render_document(source, config.asset_policy)
     except AssetError:
         logger.warning(
             "render rejected duration_ms=%d html_bytes=%d reason=asset_policy",
@@ -391,11 +435,18 @@ def render_response(
             html_bytes,
         )
 
+        if config.asset_policy is AssetPolicy.REMOTE:
+            message = b"Only data:, http:, and https: asset URLs are allowed\n"
+        else:
+            message = (
+                b"Embed images, fonts, and other assets as data URLs; "
+                b"external assets are not fetched\n"
+            )
+
         return respond(
             start_response,
             HTTPStatus.UNPROCESSABLE_CONTENT,
-            b"Embed images, fonts, and other assets as data URLs; "
-            b"external assets are not fetched\n",
+            message,
         )
     except Exception:
         logger.exception(

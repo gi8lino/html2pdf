@@ -8,7 +8,7 @@ It deliberately has a narrow API: send UTF-8 HTML to `POST /render` and receive 
 
 WeasyPrint brings native rendering dependencies that many applications do not otherwise need. Running it separately keeps those dependencies and the comparatively expensive PDF workload isolated from the calling application.
 
-The renderer also refuses network and file-system asset access. Submitted HTML cannot make the service fetch arbitrary URLs or local files; callers must provide self-contained documents.
+The renderer uses a secure asset policy by default: submitted HTML may use embedded `data:` assets, but cannot access the network or local files. Remote HTTP(S) fetching is available as an explicit opt-in.
 
 ## API
 
@@ -61,22 +61,33 @@ Inline CSS works normally:
 
 ### Assets
 
-Documents must be self-contained. Referenced images, fonts, and other resources must use `data:` URLs.
+The default `embedded` asset policy requires referenced images, fonts, and other resources to use `data:` URLs.
 
-Allowed:
+Allowed by default:
 
 ```html
 <img src="data:image/png;base64,..." alt="Example" />
 ```
 
-Rejected:
+Rejected by default:
 
 ```html
 <img src="https://example.com/image.png" alt="Example" />
 <img src="file:///etc/passwd" alt="Example" />
 ```
 
-This restriction prevents submitted documents from using the renderer for SSRF, cloud-metadata access, local-file reads, or requests to private services.
+This default prevents submitted documents from using the renderer for SSRF, cloud-metadata access, local-file reads, or requests to private services.
+
+To allow remote assets, set `HTML2PDF__ASSET_POLICY=remote`. This additionally permits `http:` and `https:` URLs while continuing to reject `file:` and other URL schemes. HTTP redirects are not followed.
+
+```sh
+docker run --rm \
+  -p 127.0.0.1:8080:8080 \
+  -e HTML2PDF__ASSET_POLICY=remote \
+  html2pdf
+```
+
+`remote` gives submitted HTML network access, including access to addresses reachable from the container. Only enable it when that is acceptable for the deployment, and prefer network-level egress restrictions when rendering untrusted HTML.
 
 ## Authentication
 
@@ -107,14 +118,15 @@ If `HTML2PDF__TOKEN` is unset or empty, `/render` accepts requests without authe
 
 The service is configured through environment variables.
 
-| Variable                   | Default        | Description                                 |
-| -------------------------- | -------------- | ------------------------------------------- |
-| `HTML2PDF__TOKEN`          | empty          | Optional bearer token for `/render`.        |
-| `HTML2PDF__LISTEN_ADDRESS` | `0.0.0.0:8080` | Gunicorn bind address inside the container. |
-| `HTML2PDF__WORKERS`        | `2`            | Number of Gunicorn workers.                 |
-| `HTML2PDF__TIMEOUT`        | `45`           | Gunicorn worker timeout in seconds.         |
-| `HTML2PDF__MAX_HTML_BYTES` | `33554432`     | Maximum HTML request size (32 MiB).         |
-| `HTML2PDF__MAX_PDF_BYTES`  | `67108864`     | Maximum generated PDF size (64 MiB).        |
+| Variable                   | Default        | Description                                           |
+| -------------------------- | -------------- | ----------------------------------------------------- |
+| `HTML2PDF__TOKEN`          | empty          | Optional bearer token for `/render`.                  |
+| `HTML2PDF__LISTEN_ADDRESS` | `0.0.0.0:8080` | Gunicorn bind address inside the container.           |
+| `HTML2PDF__WORKERS`        | `2`            | Number of Gunicorn workers.                           |
+| `HTML2PDF__TIMEOUT`        | `45`           | Gunicorn worker timeout in seconds.                   |
+| `HTML2PDF__ASSET_POLICY`   | `embedded`     | Asset mode: `embedded` or `remote`.                   |
+| `HTML2PDF__MAX_HTML_BYTES` | `33554432`     | Maximum HTML request size (32 MiB).                   |
+| `HTML2PDF__MAX_PDF_BYTES`  | `67108864`     | Maximum generated PDF size (64 MiB).                  |
 
 Size limits are configured in bytes.
 
@@ -128,9 +140,9 @@ docker run --rm \
   html2pdf
 ```
 
-The configured limits and build version are displayed on the built-in usage page.
+The configured asset policy, limits, and build version are displayed on the built-in usage page.
 
-Invalid or non-positive size limits cause the application to fail during startup rather than silently falling back to another value.
+Invalid enum values and invalid or non-positive size limits cause the application to fail during startup rather than silently falling back to another value.
 
 ## Version
 
@@ -184,6 +196,7 @@ docker run --rm \
   -p 127.0.0.1:8080:8080 \
   -e HTML2PDF__WORKERS=4 \
   -e HTML2PDF__TIMEOUT=60 \
+  -e HTML2PDF__ASSET_POLICY=remote \
   -e HTML2PDF__MAX_HTML_BYTES=67108864 \
   -e HTML2PDF__MAX_PDF_BYTES=134217728 \
   html2pdf
@@ -227,6 +240,7 @@ Runtime settings can also be overridden through the environment:
 ```sh
 HTML2PDF__WORKERS=4 \
 HTML2PDF__TIMEOUT=60 \
+HTML2PDF__ASSET_POLICY=remote \
 HTML2PDF__MAX_HTML_BYTES=67108864 \
 HTML2PDF__MAX_PDF_BYTES=134217728 \
 docker compose -f deploy/compose.yaml up --build
@@ -287,7 +301,7 @@ Recommended deployment controls:
 - set CPU, memory, and request-rate limits at the container or proxy layer;
 - terminate TLS at a reverse proxy or ingress if traffic crosses an untrusted network.
 
-The renderer accepts only embedded `data:` assets. Network URLs and local file references are rejected.
+The renderer defaults to the `embedded` asset policy, which allows only `data:` assets and rejects network and local-file access. The opt-in `remote` policy additionally allows HTTP(S) fetching but still rejects `file:` and other schemes. Because remote mode gives submitted HTML network access, use it only with trusted input or suitable egress controls.
 
 The built-in usage page also sends restrictive browser security headers, including a Content Security Policy that prevents framing and external resource loading.
 

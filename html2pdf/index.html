@@ -296,6 +296,11 @@
           </tr>
 
           <tr>
+            <td><code>HTML2PDF__ASSET_POLICY</code></td>
+            <td><code>{{ASSET_POLICY}}</code></td>
+          </tr>
+
+          <tr>
             <td><code>HTML2PDF__MAX_HTML_BYTES</code></td>
             <td>{{MAX_HTML_SIZE}}</td>
           </tr>
@@ -310,13 +315,16 @@
       <h2>Asset policy</h2>
 
       <p>
-        Documents must be self-contained. Embed images, fonts, and other assets
-        using <code>data:</code> URLs.
+        The default <code>embedded</code> policy accepts only <code>data:</code>
+        assets, keeping submitted documents isolated from the network and local
+        filesystem.
       </p>
 
       <p>
-        External assets, including HTTP(S) URLs and local files, are rejected to
-        prevent network and filesystem access.
+        Set <code>HTML2PDF__ASSET_POLICY=remote</code> to additionally allow
+        <code>http:</code> and <code>https:</code> assets. Local <code>file:</code>
+        URLs remain blocked. Remote mode gives submitted HTML network access and
+        should only be enabled when that is acceptable for the deployment.
       </p>
     </main>
 

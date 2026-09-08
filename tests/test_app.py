@@ -4,7 +4,8 @@ import unittest
 from unittest.mock import patch
 
 import html2pdf.app as app
-from html2pdf.app import AssetError, render_document
+from html2pdf.app import AssetError, AssetPolicy, render_document
+from weasyprint.urls import URLFetcherResponse
 
 
 class ServiceTests(unittest.TestCase):
@@ -54,6 +55,8 @@ class ServiceTests(unittest.TestCase):
             f'<span class="version">{self.config.version}</span>'.encode(),
             result["body"],
         )
+        self.assertIn(b"HTML2PDF__ASSET_POLICY", result["body"])
+        self.assertIn(b"<code>embedded</code>", result["body"])
         csp = result["headers"]["Content-Security-Policy"]
         self.assertIn("default-src 'none'", csp)
         self.assertIn("frame-ancestors 'none'", csp)
@@ -120,7 +123,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["status"], "200 OK")
         self.assertEqual(result["headers"]["Content-Type"], "application/pdf")
         self.assertEqual(result["body"], b"%PDF-fixture")
-        render.assert_called_once_with("<p>Hello</p>")
+        render.assert_called_once_with("<p>Hello</p>", AssetPolicy.EMBEDDED)
 
     def test_render_logging(self):
         with self.assertLogs("gunicorn.error", level="INFO") as logs:
@@ -194,11 +197,41 @@ class ServiceTests(unittest.TestCase):
             "http://10.0.0.1/private",
             "http://169.254.169.254/latest/meta-data/",
             "file:///etc/passwd",
+            "ftp://example.com/file",
         ]
 
         for url in urls:
             with self.subTest(url=url), self.assertRaises(AssetError):
                 render_document(f'<img src="{url}">')
+
+    def test_remote_policy_allows_http_and_https_assets(self):
+        svg = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
+
+        for url in ("http://example.com/image.svg", "https://example.com/image.svg"):
+            with self.subTest(url=url), patch.object(
+                app.URLFetcher,
+                "fetch",
+                return_value=URLFetcherResponse(
+                    url,
+                    svg,
+                    {"Content-Type": "image/svg+xml"},
+                ),
+            ) as fetch:
+                result = render_document(f'<img src="{url}">', AssetPolicy.REMOTE)
+
+            self.assertTrue(result.startswith(b"%PDF-"))
+            fetch.assert_called_once()
+
+    def test_remote_policy_still_rejects_non_remote_schemes(self):
+        for url in ("file:///etc/passwd", "ftp://example.com/file"):
+            with (
+                self.subTest(url=url),
+                patch.object(app.URLFetcher, "fetch") as fetch,
+                self.assertRaises(AssetError),
+            ):
+                render_document(f'<img src="{url}">', AssetPolicy.REMOTE)
+
+            fetch.assert_not_called()
 
     def test_data_url_assets_are_allowed(self):
         source = (
@@ -207,6 +240,17 @@ class ServiceTests(unittest.TestCase):
         )
         result = render_document(source)
         self.assertTrue(result.startswith(b"%PDF-"))
+
+    def test_data_url_svg_cannot_bypass_embedded_policy(self):
+        source = (
+            '<img src="data:image/svg+xml,'
+            '%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2210%22%20height%3D%2210%22%3E'
+            '%3Cimage%20href%3D%22http%3A%2F%2F127.0.0.1%3A9%2Fprivate%22%20width%3D%2210%22%20height%3D%2210%22%2F%3E'
+            '%3C%2Fsvg%3E">'
+        )
+
+        with self.assertRaises(AssetError):
+            render_document(source)
 
     def test_generated_pdf_size_limit(self):
         self.configure(max_pdf_bytes=3)
@@ -282,7 +326,7 @@ class ServiceTests(unittest.TestCase):
         with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture") as render:
             result = self.request(CONTENT_LENGTH="0" * 5000 + "12")
         self.assertEqual(result["status"], "200 OK")
-        render.assert_called_once_with("<p>Hello</p>")
+        render.assert_called_once_with("<p>Hello</p>", AssetPolicy.EMBEDDED)
         result = self.request(CONTENT_LENGTH="0000", **{"wsgi.input": None})
         self.assertEqual(result["status"], "400 Bad Request")
 
@@ -301,7 +345,7 @@ class ServiceTests(unittest.TestCase):
             ) as render:
                 result = self.request(CONTENT_TYPE=content_type)
                 self.assertEqual(result["status"], "200 OK")
-                render.assert_called_once_with("<p>Hello</p>")
+                render.assert_called_once_with("<p>Hello</p>", AssetPolicy.EMBEDDED)
 
     def test_unsupported_charsets_are_rejected_before_body_read(self):
         for charset in ("latin-1", "utf-16", '"ISO-8859-1"', ""):
@@ -339,7 +383,7 @@ class ServiceTests(unittest.TestCase):
             result = self.request(
                 body=body, CONTENT_TYPE="TEXT/HTML; charset=UTF-8")
             self.assertEqual(result["status"], "200 OK")
-            render.assert_called_once_with(body.decode())
+            render.assert_called_once_with(body.decode(), AssetPolicy.EMBEDDED)
             render.reset_mock()
             result = self.request(body=body + b" ", **{"wsgi.input": None})
             self.assertEqual(result["status"], "413 Content Too Large")
@@ -385,14 +429,18 @@ class ServiceTests(unittest.TestCase):
             '<img src="//example.com/image.png">',
             '<link rel="stylesheet" href="style.css">',
             '<link rel="stylesheet" href="https://example.com/style.css">',
+            '<object data="https://example.com/image.svg"></object>',
+            '<embed src="https://example.com/image.svg">',
+            '<a rel="attachment" href="https://example.com/file">file</a>',
             '<style>@import "file:///etc/passwd";</style>',
+            '<style>@font-face { font-family: x; src: url(https://example.com/font.woff2) } body { font-family: x }</style>',
             '<style>body { background-image: url(http://127.0.0.1/private) }</style><p>x</p>',
             '<base href="https://example.com/"><img src="image.png">',
         ]
         for source in sources:
             with (
                 self.subTest(source=source),
-                patch("html2pdf.app.default_url_fetcher") as fetch,
+                patch.object(app.URLFetcher, "fetch") as fetch,
                 self.assertRaises(AssetError),
             ):
                 render_document(source)
@@ -431,9 +479,12 @@ class ConfigTests(unittest.TestCase):
             "HTML2PDF__TOKEN": " secret ", "HTML2PDF__VERSION": " v1 ",
             "HTML2PDF__WORKERS": " 3 ", "HTML2PDF__TIMEOUT": "60",
             "HTML2PDF__MAX_HTML_BYTES": "100", "HTML2PDF__MAX_PDF_BYTES": "200",
+            "HTML2PDF__ASSET_POLICY": " REMOTE ",
         })
-        self.assertEqual(config, app.Config("secret", "v1",
-                                            3, 60, 100, 200))
+        self.assertEqual(
+            config,
+            app.Config("secret", "v1", 3, 60, 100, 200, asset_policy=AssetPolicy.REMOTE),
+        )
 
     def test_invalid_numeric_configuration_fails_startup(self):
         for name in ("WORKERS", "TIMEOUT", "MAX_HTML_BYTES", "MAX_PDF_BYTES"):
@@ -447,10 +498,20 @@ class ConfigTests(unittest.TestCase):
             "HTML2PDF__VERSION": " ",
             "HTML2PDF__LISTEN_ADDRESS": "",
             "HTML2PDF__WORKERS": " ",
+            "HTML2PDF__ASSET_POLICY": " ",
         })
         self.assertEqual(config.version, "dev")
         self.assertEqual(config.listen_address, "0.0.0.0:8080")
         self.assertEqual(config.workers, 2)
+        self.assertIs(config.asset_policy, AssetPolicy.EMBEDDED)
+
+    def test_invalid_asset_policy_fails_startup(self):
+        for value in ("allow", "all", "http", "file", "nope"):
+            with self.subTest(value=value), self.assertRaisesRegex(
+                ValueError,
+                "HTML2PDF__ASSET_POLICY must be one of: embedded, remote",
+            ):
+                app.Config.from_env({"HTML2PDF__ASSET_POLICY": value})
 
     def test_index_escapes_configuration_and_never_displays_token(self):
         config = app.Config('hidden-secret', '<test>',
