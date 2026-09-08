@@ -444,9 +444,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_blank_values_use_defaults(self):
         config = app.Config.from_env({
-            "HTML2PDF__VERSION": " ", "HTML2PDF__WORKERS": " ",
+            "HTML2PDF__VERSION": " ",
+            "HTML2PDF__LISTEN_ADDRESS": "",
+            "HTML2PDF__WORKERS": " ",
         })
         self.assertEqual(config.version, "dev")
+        self.assertEqual(config.listen_address, "0.0.0.0:8080")
         self.assertEqual(config.workers, 2)
 
     def test_index_escapes_configuration_and_never_displays_token(self):

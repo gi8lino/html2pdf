@@ -40,47 +40,6 @@ INDEX_HEADERS: tuple[Header, ...] = (
 
 
 @dataclass(frozen=True, slots=True)
-class EnvValue:
-    """Environment variable value with typed conversion helpers."""
-
-    name: str
-    raw: str | None
-
-    def as_str(self, default: str = "") -> str:
-        """Return the value as a stripped string."""
-        if self.raw is None:
-            return default
-
-        return self.raw.strip() or default
-
-    def as_int(self, *, default: int, minimum: int = 1) -> int:
-        """Return the value as a validated integer."""
-        if self.raw is None or not self.raw.strip():
-            return default
-
-        try:
-            value = int(self.raw)
-        except ValueError as exc:
-            raise ValueError(f"{self.name} must be an integer") from exc
-
-        if value < minimum:
-            raise ValueError(f"{self.name} must be at least {minimum}")
-
-        return value
-
-
-@dataclass(frozen=True, slots=True)
-class Env:
-    """Typed access to environment variables."""
-
-    values: Mapping[str, str]
-
-    def value(self, name: str) -> EnvValue:
-        """Return an environment variable value."""
-        return EnvValue(name, self.values.get(name))
-
-
-@dataclass(frozen=True, slots=True)
 class Config:
     """Runtime configuration loaded from environment variables."""
 
@@ -93,19 +52,39 @@ class Config:
     listen_address: str = "0.0.0.0:8080"
 
     @classmethod
-    def from_env(cls, values: Mapping[str, str]) -> Config:
+    def from_env(cls, env: Mapping[str, str]) -> Config:
         """Load and validate runtime configuration."""
-        env = Env(values)
-
         return cls(
-            token=env.value("HTML2PDF__TOKEN").as_str(),
-            version=env.value("HTML2PDF__VERSION").as_str(default="dev"),
-            listen_address=env.value("HTML2PDF__LISTEN_ADDRESS").as_str(default="0.0.0.0:8080"),
-            workers=env.value("HTML2PDF__WORKERS").as_int(default=2),
-            timeout=env.value("HTML2PDF__TIMEOUT").as_int(default=45),
-            max_html_bytes=env.value("HTML2PDF__MAX_HTML_BYTES").as_int(default=32 * 1024 * 1024),
-            max_pdf_bytes=env.value("HTML2PDF__MAX_PDF_BYTES").as_int(default=64 * 1024 * 1024),
+            token=cls._env_str(env, "HTML2PDF__TOKEN"),
+            version=cls._env_str(env, "HTML2PDF__VERSION", "dev"),
+            listen_address=cls._env_str(env, "HTML2PDF__LISTEN_ADDRESS", "0.0.0.0:8080"),
+            workers=cls._env_int(env, "HTML2PDF__WORKERS", 2),
+            timeout=cls._env_int(env, "HTML2PDF__TIMEOUT", 45),
+            max_html_bytes=cls._env_int(env, "HTML2PDF__MAX_HTML_BYTES", 32 * 1024 * 1024),
+            max_pdf_bytes=cls._env_int(env, "HTML2PDF__MAX_PDF_BYTES", 64 * 1024 * 1024),
         )
+
+    @staticmethod
+    def _env_str(env: Mapping[str, str], name: str, default: str = "") -> str:
+        """Read a stripped string, using the default for blank values."""
+        return env.get(name, "").strip() or default
+
+    @classmethod
+    def _env_int(cls, env: Mapping[str, str], name: str, default: int, *, minimum: int = 1) -> int:
+        """Read and validate an integer environment variable."""
+        value = cls._env_str(env, name)
+        if not value:
+            return default
+
+        try:
+            result = int(value)
+        except ValueError:
+            raise ValueError(f"{name} must be an integer") from None
+
+        if result < minimum:
+            raise ValueError(f"{name} must be at least {minimum}")
+
+        return result
 
 
 class AssetError(ValueError):
