@@ -1,6 +1,6 @@
 *
-!app.py
-!index.html
-!logo.svg
-!gunicorn.conf.py
+!html2pdf/
+!html2pdf/**
+!server/
+!server/gunicorn.conf.py
 !Dockerfile

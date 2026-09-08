@@ -4,6 +4,7 @@
 
 ## Container Configuration
 IMAGE ?= html2pdf
+COMPOSE_FILE ?= deploy/compose.yaml
 DEV_TAG ?= dev
 HOST ?= 127.0.0.1
 PORT ?= 8080
@@ -51,7 +52,7 @@ push: ## Push tags to the configured remote.
 
 .PHONY: test
 test: ## Run the unit tests.
-	python3 -m unittest -v
+	python3 -m unittest discover -s tests -v
 
 .PHONY: build
 build: ## Build the development container image.
@@ -73,16 +74,16 @@ dev-auth: build ## Build and run locally with bearer-token authentication.
 
 .PHONY: compose
 compose: ## Run the development stack with Docker Compose.
-	HTML2PDF__BUILD_VERSION="$(BUILD_VERSION)" docker compose up --build
+	HTML2PDF__BUILD_VERSION="$(BUILD_VERSION)" docker compose -f "$(COMPOSE_FILE)" up --build
 
 .PHONY: compose-auth
 compose-auth: ## Run the development stack with bearer-token authentication.
 	@test -n "$(HTML2PDF__TOKEN)" || { echo "Set HTML2PDF__TOKEN first" >&2; exit 1; }
-	HTML2PDF__BUILD_VERSION="$(BUILD_VERSION)" HTML2PDF__TOKEN="$(HTML2PDF__TOKEN)" docker compose up --build
+	HTML2PDF__BUILD_VERSION="$(BUILD_VERSION)" HTML2PDF__TOKEN="$(HTML2PDF__TOKEN)" docker compose -f "$(COMPOSE_FILE)" up --build
 
 .PHONY: stop
 stop: ## Stop the Docker Compose stack.
-	docker compose down
+	docker compose -f "$(COMPOSE_FILE)" down
 
 .PHONY: clean
 clean: ## Remove the development container image.

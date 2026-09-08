@@ -25,11 +25,12 @@ ENV \
 
 WORKDIR /app
 
-COPY app.py index.html logo.svg gunicorn.conf.py ./
+COPY html2pdf/ ./html2pdf/
+COPY server/gunicorn.conf.py ./server/gunicorn.conf.py
 
 USER 65532:0
 
 EXPOSE 8080
 
 ENTRYPOINT ["gunicorn"]
-CMD ["--config", "gunicorn.conf.py", "app:application"]
+CMD ["--config", "server/gunicorn.conf.py", "html2pdf.app:application"]

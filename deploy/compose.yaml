@@ -1,7 +1,10 @@
+name: html2pdf
+
 services:
   html2pdf:
     build:
-      context: .
+      context: ..
+      dockerfile: Dockerfile
       args:
         VERSION: ${HTML2PDF__BUILD_VERSION:-dev}
     ports:

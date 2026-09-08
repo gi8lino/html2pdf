@@ -213,13 +213,13 @@ Both examples expose the usage page at `http://localhost:9090/`.
 Start the service with:
 
 ```sh
-docker compose up --build
+docker compose -f deploy/compose.yaml up --build
 ```
 
 To enable authentication:
 
 ```sh
-HTML2PDF__TOKEN="$(openssl rand -hex 32)" docker compose up --build
+HTML2PDF__TOKEN="$(openssl rand -hex 32)" docker compose -f deploy/compose.yaml up --build
 ```
 
 Runtime settings can also be overridden through the environment:
@@ -229,7 +229,7 @@ HTML2PDF__WORKERS=4 \
 HTML2PDF__TIMEOUT=60 \
 HTML2PDF__MAX_HTML_BYTES=67108864 \
 HTML2PDF__MAX_PDF_BYTES=134217728 \
-docker compose up --build
+docker compose -f deploy/compose.yaml up --build
 ```
 
 The included Compose configuration runs the container with a read-only root filesystem, a bounded `/tmp`, dropped Linux capabilities, and `no-new-privileges`.

@@ -3,8 +3,8 @@ from dataclasses import replace
 import unittest
 from unittest.mock import patch
 
-import app
-from app import AssetError, render_document
+import html2pdf.app as app
+from html2pdf.app import AssetError, render_document
 
 
 class ServiceTests(unittest.TestCase):
@@ -63,7 +63,7 @@ class ServiceTests(unittest.TestCase):
     def test_applications_keep_configuration_and_pages_isolated(self):
         original = self.application
         self.configure(token="secret", version="other", max_html_bytes=1)
-        with patch("app.render_document", return_value=b"%PDF-fixture"):
+        with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture"):
             self.assertEqual(self.request()["status"], "401 Unauthorized")
             self.assertEqual(
                 self.request(HTTP_AUTHORIZATION="Bearer secret")["status"],
@@ -79,7 +79,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_assets_are_loaded_once_per_application(self):
         with (
-            patch("app.load_index", return_value=b"cached page") as index,
+            patch("html2pdf.app.load_index", return_value=b"cached page") as index,
             patch.object(app.Path, "read_bytes", return_value=b"cached logo") as logo,
         ):
             application = app.create_application(self.config)
@@ -115,7 +115,7 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(result["body"], b"ok\n")
 
     def test_http_contract(self):
-        with patch("app.render_document", return_value=b"%PDF-fixture") as render:
+        with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture") as render:
             result = self.request()
         self.assertEqual(result["status"], "200 OK")
         self.assertEqual(result["headers"]["Content-Type"], "application/pdf")
@@ -124,7 +124,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_render_logging(self):
         with self.assertLogs("gunicorn.error", level="INFO") as logs:
-            with patch("app.render_document", return_value=b"%PDF-fixture"):
+            with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture"):
                 result = self.request()
 
         self.assertEqual(result["status"], "200 OK")
@@ -135,7 +135,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_rejected_render_logging(self):
         with self.assertLogs("gunicorn.error", level="WARNING") as logs:
-            with patch("app.render_document", side_effect=AssetError):
+            with patch("html2pdf.app.render_document", side_effect=AssetError):
                 result = self.request()
 
         self.assertEqual(result["status"], "422 Unprocessable Content")
@@ -147,7 +147,7 @@ class ServiceTests(unittest.TestCase):
         self.configure(token="secret")
         missing = self.request()
         wrong = self.request(HTTP_AUTHORIZATION="Bearer nope")
-        with patch("app.render_document", return_value=b"%PDF-fixture"):
+        with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture"):
             valid = self.request(HTTP_AUTHORIZATION="Bearer secret")
 
         self.assertEqual(missing["status"], "401 Unauthorized")
@@ -182,7 +182,7 @@ class ServiceTests(unittest.TestCase):
         ]
 
         for args, expected in cases:
-            with self.subTest(args=args), patch("app.render_document") as render:
+            with self.subTest(args=args), patch("html2pdf.app.render_document") as render:
                 result = self.request(**args)
                 self.assertEqual(int(result["status"].split()[0]), expected)
                 render.assert_not_called()
@@ -211,7 +211,7 @@ class ServiceTests(unittest.TestCase):
     def test_generated_pdf_size_limit(self):
         self.configure(max_pdf_bytes=3)
         with (
-            patch("app.render_document", return_value=b"1234"),
+            patch("html2pdf.app.render_document", return_value=b"1234"),
             self.assertLogs("gunicorn.error", level="WARNING") as logs,
         ):
             result = self.request()
@@ -243,7 +243,7 @@ class ServiceTests(unittest.TestCase):
     def test_non_ascii_authorization_is_rejected_without_rendering(self):
         self.configure(token="secret")
         with (
-            patch("app.render_document") as render,
+            patch("html2pdf.app.render_document") as render,
         ):
             result = self.request(HTTP_AUTHORIZATION="Bearer séc ret")
         self.assertEqual(result["status"], "401 Unauthorized")
@@ -252,7 +252,7 @@ class ServiceTests(unittest.TestCase):
     def test_bearer_scheme_is_case_insensitive(self):
         self.configure(token="secret")
         with (
-            patch("app.render_document", return_value=b"%PDF-fixture"),
+            patch("html2pdf.app.render_document", return_value=b"%PDF-fixture"),
         ):
             result = self.request(HTTP_AUTHORIZATION="  bEaReR   secret  ")
         self.assertEqual(result["status"], "200 OK")
@@ -265,21 +265,21 @@ class ServiceTests(unittest.TestCase):
 
     def test_content_length_requires_ascii_digits(self):
         for length in ("+12", "1_2", "１２", "١٢", "1.2"):
-            with self.subTest(length=length), patch("app.render_document") as render:
+            with self.subTest(length=length), patch("html2pdf.app.render_document") as render:
                 result = self.request(CONTENT_LENGTH=length)
                 self.assertEqual(result["status"], "400 Bad Request")
                 render.assert_not_called()
 
     def test_oversized_content_length_is_rejected_before_body_read(self):
         for length in (str(self.config.max_html_bytes + 1), "9" * 5000):
-            with self.subTest(digits=len(length)), patch("app.render_document") as render:
+            with self.subTest(digits=len(length)), patch("html2pdf.app.render_document") as render:
                 result = self.request(
                     CONTENT_LENGTH=length, **{"wsgi.input": None})
                 self.assertEqual(result["status"], "413 Content Too Large")
                 render.assert_not_called()
 
     def test_content_length_with_leading_zeroes(self):
-        with patch("app.render_document", return_value=b"%PDF-fixture") as render:
+        with patch("html2pdf.app.render_document", return_value=b"%PDF-fixture") as render:
             result = self.request(CONTENT_LENGTH="0" * 5000 + "12")
         self.assertEqual(result["status"], "200 OK")
         render.assert_called_once_with("<p>Hello</p>")
@@ -297,7 +297,7 @@ class ServiceTests(unittest.TestCase):
         )
         for content_type in content_types:
             with self.subTest(content_type=content_type), patch(
-                "app.render_document", return_value=b"%PDF-fixture"
+                "html2pdf.app.render_document", return_value=b"%PDF-fixture"
             ) as render:
                 result = self.request(CONTENT_TYPE=content_type)
                 self.assertEqual(result["status"], "200 OK")
@@ -305,7 +305,7 @@ class ServiceTests(unittest.TestCase):
 
     def test_unsupported_charsets_are_rejected_before_body_read(self):
         for charset in ("latin-1", "utf-16", '"ISO-8859-1"', ""):
-            with self.subTest(charset=charset), patch("app.render_document") as render:
+            with self.subTest(charset=charset), patch("html2pdf.app.render_document") as render:
                 result = self.request(
                     CONTENT_TYPE=f"text/html; charset={charset}",
                     **{"wsgi.input": None},
@@ -325,7 +325,7 @@ class ServiceTests(unittest.TestCase):
                     self.assertEqual(result["body"], b"Use GET\n")
 
     def test_empty_body_is_rejected(self):
-        with patch("app.render_document") as render:
+        with patch("html2pdf.app.render_document") as render:
             result = self.request(body=b"")
         self.assertEqual(result["status"], "400 Bad Request")
         render.assert_not_called()
@@ -334,7 +334,7 @@ class ServiceTests(unittest.TestCase):
         body = "<p>é</p>".encode()
         self.configure(max_html_bytes=len(body))
         with (
-            patch("app.render_document", return_value=b"%PDF-fixture") as render,
+            patch("html2pdf.app.render_document", return_value=b"%PDF-fixture") as render,
         ):
             result = self.request(
                 body=body, CONTENT_TYPE="TEXT/HTML; charset=UTF-8")
@@ -348,14 +348,14 @@ class ServiceTests(unittest.TestCase):
     def test_pdf_limit_is_inclusive(self):
         self.configure(max_pdf_bytes=4)
         with (
-            patch("app.render_document", return_value=b"1234"),
+            patch("html2pdf.app.render_document", return_value=b"1234"),
         ):
             result = self.request()
         self.assertEqual(result["status"], "200 OK")
 
     def test_internal_render_error_is_logged_but_not_exposed(self):
         with (
-            patch("app.render_document",
+            patch("html2pdf.app.render_document",
                   side_effect=RuntimeError("private details")),
             self.assertLogs("gunicorn.error", level="ERROR") as logs,
         ):
@@ -392,7 +392,7 @@ class ServiceTests(unittest.TestCase):
         for source in sources:
             with (
                 self.subTest(source=source),
-                patch("app.default_url_fetcher") as fetch,
+                patch("html2pdf.app.default_url_fetcher") as fetch,
                 self.assertRaises(AssetError),
             ):
                 render_document(source)
