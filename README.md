@@ -251,6 +251,8 @@ These application-level limits do not replace container resource limits. CPU, me
 
 ## Observability
 
+Gunicorn access logs are enabled for normal requests. Successful `GET /healthz` requests are omitted to avoid log noise from Kubernetes/OpenShift health probes. Failed health checks and other requests are still logged.
+
 Each render writes basic operational information to the application log.
 
 Successful renders include the render duration and input/output sizes:
