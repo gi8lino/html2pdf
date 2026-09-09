@@ -4,11 +4,11 @@
 
 It deliberately has a narrow API: send UTF-8 HTML to `POST /render` and receive an `application/pdf` response. The service does not know about users, documents, templates, or any particular application.
 
+The renderer uses a secure asset policy by default: submitted HTML may use embedded `data:` assets, but cannot access the network or local files. Remote HTTP(S) fetching is available as an explicit opt-in.
+
 ## Why a separate service?
 
 WeasyPrint brings native rendering dependencies that many applications do not otherwise need. Running it separately keeps those dependencies and the comparatively expensive PDF workload isolated from the calling application.
-
-The renderer uses a secure asset policy by default: submitted HTML may use embedded `data:` assets, but cannot access the network or local files. Remote HTTP(S) fetching is available as an explicit opt-in.
 
 ## API
 
@@ -91,15 +91,17 @@ docker run --rm \
 
 ## Authentication
 
-Bearer-token authentication is optional. For a service that is reachable only over a trusted private network, you may leave it disabled. If the renderer is reachable across a broader network, configuring a token is recommended in addition to normal network-level controls.
+Authentication for `/render` is optional. When enabled, it uses a static shared secret sent using the HTTP `Authorization: Bearer` scheme.
 
-Set `HTML2PDF__TOKEN`:
+The secret is configured through `HTML2PDF__TOKEN`. It is an opaque shared secret, not an OAuth2 access token or JWT. Possession of the configured secret grants access to `/render`.
+
+Generate a suitably random secret and set `HTML2PDF__TOKEN`:
 
 ```sh
 export HTML2PDF__TOKEN="$(openssl rand -hex 32)"
 ```
 
-Then send it as a bearer token:
+Then send the same secret as a Bearer token:
 
 ```sh
 curl --fail-with-body \
@@ -118,15 +120,15 @@ If `HTML2PDF__TOKEN` is unset or empty, `/render` accepts requests without authe
 
 The service is configured through environment variables.
 
-| Variable                   | Default        | Description                                           |
-| -------------------------- | -------------- | ----------------------------------------------------- |
-| `HTML2PDF__TOKEN`          | empty          | Optional bearer token for `/render`.                  |
-| `HTML2PDF__LISTEN_ADDRESS` | `0.0.0.0:8080` | Gunicorn bind address inside the container.           |
-| `HTML2PDF__WORKERS`        | `2`            | Number of Gunicorn workers.                           |
-| `HTML2PDF__TIMEOUT`        | `45`           | Gunicorn worker timeout in seconds.                   |
-| `HTML2PDF__ASSET_POLICY`   | `embedded`     | Asset mode: `embedded` or `remote`.                   |
-| `HTML2PDF__MAX_HTML_BYTES` | `33554432`     | Maximum HTML request size (32 MiB).                   |
-| `HTML2PDF__MAX_PDF_BYTES`  | `67108864`     | Maximum generated PDF size (64 MiB).                  |
+| Variable                   | Default        | Description                                                         |
+| -------------------------- | -------------- | ------------------------------------------------------------------- |
+| `HTML2PDF__TOKEN`          | empty          | Optional shared secret for `/render`, sent using the Bearer scheme. |
+| `HTML2PDF__LISTEN_ADDRESS` | `0.0.0.0:8080` | Gunicorn bind address inside the container.                         |
+| `HTML2PDF__WORKERS`        | `2`            | Number of Gunicorn workers.                                         |
+| `HTML2PDF__TIMEOUT`        | `45`           | Gunicorn worker timeout in seconds.                                 |
+| `HTML2PDF__ASSET_POLICY`   | `embedded`     | Asset mode: `embedded` or `remote`.                                 |
+| `HTML2PDF__MAX_HTML_BYTES` | `33554432`     | Maximum HTML request size (32 MiB).                                 |
+| `HTML2PDF__MAX_PDF_BYTES`  | `67108864`     | Maximum generated PDF size (64 MiB).                                |
 
 Size limits are configured in bytes.
 
@@ -295,17 +297,19 @@ Recommended deployment controls:
 
 - keep the service on a private network whenever possible;
 - configure `HTML2PDF__TOKEN` when callers are not fully trusted at the network layer;
+- use TLS at a reverse proxy or ingress whenever the shared secret crosses an untrusted network;
 - run the container as non-root;
 - use a read-only root filesystem;
 - provide only a temporary writable `/tmp`;
-- set CPU, memory, and request-rate limits at the container or proxy layer;
-- terminate TLS at a reverse proxy or ingress if traffic crosses an untrusted network.
+- set CPU, memory, and request-rate limits at the container or proxy layer.
+
+The configured authentication secret is a static shared secret. The service does not issue tokens, validate OAuth2 access tokens, or provide token expiration or rotation. Protect the secret like any other service credential.
 
 The renderer defaults to the `embedded` asset policy, which allows only `data:` assets and rejects network and local-file access. The opt-in `remote` policy additionally allows HTTP(S) fetching but still rejects `file:` and other schemes. Because remote mode gives submitted HTML network access, use it only with trusted input or suitable egress controls.
 
 The built-in usage page also sends restrictive browser security headers, including a Content Security Policy that prevents framing and external resource loading.
 
-The service does not implement TLS, user accounts, token rotation, rate limiting, or persistent storage.
+The service does not implement TLS, user accounts, OAuth2, token rotation, rate limiting, or persistent storage.
 
 ## Development
 
@@ -329,7 +333,7 @@ Build and run the service locally on `127.0.0.1:8080`:
 make dev
 ```
 
-Enable bearer-token authentication during development:
+Enable authentication during development:
 
 ```sh
 HTML2PDF__TOKEN="$(openssl rand -hex 32)" make dev-auth
@@ -358,7 +362,7 @@ or with authentication:
 HTML2PDF__TOKEN="$(openssl rand -hex 32)" make compose-auth
 ```
 
-The test suite covers the HTTP contract, optional bearer authentication, input validation, configured size limits, asset isolation, usage-page security headers, logging, and real PDF rendering.
+The test suite covers the HTTP contract, optional shared-secret authentication, input validation, configured size limits, asset isolation, usage-page security headers, logging, and real PDF rendering.
 
 ## License
 

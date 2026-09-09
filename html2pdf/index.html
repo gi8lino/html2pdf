@@ -242,9 +242,10 @@
       <h2>Authentication</h2>
 
       <p>
-        Bearer authentication for <code>/render</code> is optional. When
-        <code>HTML2PDF__TOKEN</code> is configured, include it in the
-        <code>Authorization</code> header.
+        Authentication for <code>/render</code> is optional. When enabled,
+        <code>HTML2PDF__TOKEN</code> is used as a static shared secret sent
+        using the HTTP <code>Authorization: Bearer</code> scheme. It is not an
+        OAuth2 access token or JWT.
       </p>
 
       <div class="code-block">
@@ -322,7 +323,8 @@
 
       <p>
         Set <code>HTML2PDF__ASSET_POLICY=remote</code> to additionally allow
-        <code>http:</code> and <code>https:</code> assets. Local <code>file:</code>
+        <code>http:</code> and <code>https:</code> assets. Local
+        <code>file:</code>
         URLs remain blocked. Remote mode gives submitted HTML network access and
         should only be enabled when that is acceptable for the deployment.
       </p>
