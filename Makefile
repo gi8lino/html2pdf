@@ -2,6 +2,33 @@
 
 .DEFAULT_GOAL := help
 
+LOCALBIN ?= bin
+
+$(LOCALBIN):
+	@mkdir -p "$@"
+
+## Tool Versions
+# renovate: datasource=github-releases depName=gi8lino/dev-tools
+DEV_TOOLS_VERSION ?= v0.5.0
+
+## Tool Binaries
+DEV_TOOL_NAMES := dev-port open-browser dev-tag make-help go-install-tool
+DEV_TOOL_TARGETS := $(addprefix $(LOCALBIN)/,$(DEV_TOOL_NAMES))
+DEV_TOOL_VERSIONED := $(addsuffix -$(DEV_TOOLS_VERSION),$(DEV_TOOL_TARGETS))
+
+DEV_PORT := $(LOCALBIN)/dev-port
+OPEN_BROWSER := $(LOCALBIN)/open-browser
+DEV_TAG := $(LOCALBIN)/dev-tag
+MAKE_HELP := $(LOCALBIN)/make-help
+GO_INSTALL_TOOL := $(LOCALBIN)/go-install-tool
+
+# Run a local tool while displaying only its executable name.
+define run-tool
+@printf '%s\n' '$(notdir $(1)) $(2)'
+@$(1) $(2)
+endef
+
+
 ## Container Configuration
 IMAGE ?= html2pdf
 COMPOSE_FILE ?= deploy/compose.yaml
@@ -17,32 +44,26 @@ VERSION_PREFIX ?= v
 
 ##@ Tagging
 
-# Find the latest tag with the configured prefix, or use 0.0.0 when none exists.
-LATEST_TAG = $(shell git tag --list "$(VERSION_PREFIX)*" --sort=-v:refname | head -n 1)
-VERSION = $(shell [ -n "$(LATEST_TAG)" ] && echo $(LATEST_TAG) | sed "s/^$(VERSION_PREFIX)//" || echo "0.0.0")
-BUILD_VERSION ?= $(if $(LATEST_TAG),$(LATEST_TAG),dev)
+VERSION_PREFIX ?= v
+
+.PHONY: current
+current: $(DEV_TAG) ## Show the current semantic version tag.
+	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" current)
 
 .PHONY: patch
-patch: ## Create a new patch release (x.y.Z+1).
-	@NEW_VERSION=$$(echo "$(VERSION)" | awk -F. '{printf "%d.%d.%d", $$1, $$2, $$3+1}') && \
-	git tag "$(VERSION_PREFIX)$${NEW_VERSION}" && \
-	echo "Tagged $(VERSION_PREFIX)$${NEW_VERSION}"
+patch: $(DEV_TAG) ## Create a new patch release (x.y.Z+1).
+	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" patch)
 
 .PHONY: minor
-minor: ## Create a new minor release (x.Y+1.0).
-	@NEW_VERSION=$$(echo "$(VERSION)" | awk -F. '{printf "%d.%d.0", $$1, $$2+1}') && \
-	git tag "$(VERSION_PREFIX)$${NEW_VERSION}" && \
-	echo "Tagged $(VERSION_PREFIX)$${NEW_VERSION}"
+minor: $(DEV_TAG) ## Create a new minor release (x.Y+1.0).
+	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" minor)
 
 .PHONY: major
-major: ## Create a new major release (X+1.0.0).
-	@NEW_VERSION=$$(echo "$(VERSION)" | awk -F. '{printf "%d.0.0", $$1+1}') && \
-	git tag "$(VERSION_PREFIX)$${NEW_VERSION}" && \
-	echo "Tagged $(VERSION_PREFIX)$${NEW_VERSION}"
+major: $(DEV_TAG) ## Create a new major release (X+1.0.0).
+	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" major)
 
 .PHONY: tag
-tag: ## Show the latest tag.
-	@echo "Latest version: $(LATEST_TAG)"
+tag: current
 
 .PHONY: push
 push: ## Push tags to the configured remote.
@@ -92,5 +113,32 @@ clean: ## Remove the development container image.
 ##@ General
 
 .PHONY: help
-help: ## Display this help.
-	@awk 'BEGIN {FS = ":.*##"; printf "\nUsage:\n  make \033[36m<target>\033[0m\n"} /^[a-zA-Z_0-9-]+:.*?##/ { printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2 } /^##@/ { printf "\n\033[1m%s\033[0m\n", substr($$0, 5) }' $(MAKEFILE_LIST)
+help: $(MAKE_HELP) ## Display this help.
+	@$(MAKE_HELP) $(MAKEFILE_LIST)
+
+##@ Development tools
+
+.PHONY: dev-tools
+dev-tools: $(DEV_TOOL_TARGETS) ## Download the pinned development tools.
+
+$(DEV_TOOL_TARGETS): $(LOCALBIN)/%: $(LOCALBIN)/%-$(DEV_TOOLS_VERSION)
+	@ln -sf "$(notdir $<)" "$@"
+
+$(DEV_TOOL_VERSIONED): $(LOCALBIN)/%-$(DEV_TOOLS_VERSION): | $(LOCALBIN)
+	$(call download-dev-tool,$*,$@)
+
+# download-dev-tool downloads a versioned tool from gi8lino/dev-tools.
+# $1 - release asset name
+# $2 - versioned destination path
+define download-dev-tool
+	@set -eu; \
+	tmp="$(2).tmp"; \
+	trap 'rm -f "$$tmp"' EXIT INT TERM; \
+	echo "Downloading gi8lino/dev-tools $(DEV_TOOLS_VERSION) $(1)"; \
+	curl --fail --silent --show-error --location \
+		"https://github.com/gi8lino/dev-tools/releases/download/$(DEV_TOOLS_VERSION)/$(1)" \
+		-o "$$tmp"; \
+	chmod +x "$$tmp"; \
+	mv "$$tmp" "$(2)"; \
+	trap - EXIT INT TERM
+endef
