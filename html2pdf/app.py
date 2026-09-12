@@ -6,6 +6,7 @@ import hmac
 import html
 import logging
 import os
+import re
 import time
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -224,8 +225,12 @@ def load_index(config: Config) -> bytes:
 
     page = Path(__file__).with_name("index.html").read_text(encoding="utf-8")
 
-    for placeholder, value in replacements.items():
-        page = page.replace(placeholder, html.escape(value, quote=True))
+    # Substitute only template text, never placeholders inside runtime values.
+    page = re.sub(
+        r"{{[A-Z_]+}}",
+        lambda match: html.escape(replacements[match[0]], quote=True),
+        page,
+    )
 
     return page.encode("utf-8")
 

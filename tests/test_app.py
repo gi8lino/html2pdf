@@ -524,6 +524,17 @@ class ConfigTests(unittest.TestCase):
         self.assertNotIn('hidden-secret', page)
         self.assertNotIn('{{', page)
 
+    def test_index_preserves_placeholder_text_in_configuration(self):
+        config = replace(
+            app.Config.from_env({}),
+            version="{{WORKERS}}<test>",
+            listen_address="{{TIMEOUT}}&address",
+        )
+        page = app.load_index(config)
+        self.assertIn(b'<span class="version">{{WORKERS}}&lt;test&gt;</span>', page)
+        self.assertIn(b"<code>{{TIMEOUT}}&amp;address</code>", page)
+        self.assertIn(b"<code>45s</code>", page)
+
     def test_byte_size_formatting(self):
         for value, expected in ((0, "0 B"), (1023, "1023 B"), (1024, "1 KiB"),
                                 (1536, "1.5 KiB"), (1024 ** 2, "1 MiB"),

@@ -18,7 +18,7 @@ DEV_TOOL_VERSIONED := $(addsuffix -$(DEV_TOOLS_VERSION),$(DEV_TOOL_TARGETS))
 
 DEV_PORT := $(LOCALBIN)/dev-port
 OPEN_BROWSER := $(LOCALBIN)/open-browser
-DEV_TAG := $(LOCALBIN)/dev-tag
+DEV_TAG_TOOL := $(LOCALBIN)/dev-tag
 MAKE_HELP := $(LOCALBIN)/make-help
 GO_INSTALL_TOOL := $(LOCALBIN)/go-install-tool
 
@@ -33,6 +33,7 @@ endef
 IMAGE ?= html2pdf
 COMPOSE_FILE ?= deploy/compose.yaml
 DEV_TAG ?= dev
+BUILD_VERSION ?= $(shell git describe --tags --match 'v*' --abbrev=0 2>/dev/null || echo dev)
 HOST ?= 127.0.0.1
 PORT ?= 8080
 HTML2PDF__TOKEN ?=
@@ -44,23 +45,21 @@ VERSION_PREFIX ?= v
 
 ##@ Tagging
 
-VERSION_PREFIX ?= v
-
 .PHONY: current
-current: $(DEV_TAG) ## Show the current semantic version tag.
-	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" current)
+current: $(DEV_TAG_TOOL) ## Show the current semantic version tag.
+	$(call run-tool,$(DEV_TAG_TOOL),--prefix "$(VERSION_PREFIX)" current)
 
 .PHONY: patch
-patch: $(DEV_TAG) ## Create a new patch release (x.y.Z+1).
-	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" patch)
+patch: $(DEV_TAG_TOOL) ## Create a new patch release (x.y.Z+1).
+	$(call run-tool,$(DEV_TAG_TOOL),--prefix "$(VERSION_PREFIX)" patch)
 
 .PHONY: minor
-minor: $(DEV_TAG) ## Create a new minor release (x.Y+1.0).
-	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" minor)
+minor: $(DEV_TAG_TOOL) ## Create a new minor release (x.Y+1.0).
+	$(call run-tool,$(DEV_TAG_TOOL),--prefix "$(VERSION_PREFIX)" minor)
 
 .PHONY: major
-major: $(DEV_TAG) ## Create a new major release (X+1.0.0).
-	$(call run-tool,$(DEV_TAG),--prefix "$(VERSION_PREFIX)" major)
+major: $(DEV_TAG_TOOL) ## Create a new major release (X+1.0.0).
+	$(call run-tool,$(DEV_TAG_TOOL),--prefix "$(VERSION_PREFIX)" major)
 
 .PHONY: tag
 tag: current
